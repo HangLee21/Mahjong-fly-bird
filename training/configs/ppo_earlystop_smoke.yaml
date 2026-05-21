@@ -1,4 +1,4 @@
-seed: 2026
+﻿seed: 2026
 env:
   controlled_player: 0
   max_steps_per_game: 300
@@ -43,3 +43,4 @@ early_stop:
   patience: 1
   min_timesteps: 128
   seed_offset: 200000
+

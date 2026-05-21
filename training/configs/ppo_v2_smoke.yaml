@@ -1,0 +1,45 @@
+seed: 2026
+env:
+  controlled_player: 0
+  max_steps_per_game: 120
+  opponent_agent: pool
+  allow_chow: true
+opponent_pool:
+  members:
+    - kind: heuristic
+      weight: 0.6
+    - kind: win_first
+      weight: 0.3
+    - kind: random
+      weight: 0.1
+reward:
+  score_scale: 10.0
+  step_penalty: 0.001
+  shanten_improvement_bonus: 0.012
+  shanten_regression_penalty: 0.006
+model:
+  policy: MlpPolicy
+  device: auto
+  activation_fn: tanh
+  net_arch:
+    pi: [64, 64]
+    vf: [64, 64]
+train:
+  total_timesteps: 128
+  num_envs: 2
+  vec_env_type: dummy
+  learning_rate: 0.0003
+  n_steps: 64
+  batch_size: 64
+  n_epochs: 1
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+logging:
+  checkpoint_dir: artifacts/checkpoints/ppo_v2_smoke
+  checkpoint_freq: 0
+early_stop:
+  enabled: false

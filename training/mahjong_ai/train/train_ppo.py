@@ -82,6 +82,8 @@ def build_env(cfg: dict):
         raise SystemExit("stable-baselines3 is required for vectorized training") from exc
 
     env_cfg = {**cfg.get("env", {}), "reward": cfg.get("reward", {})}
+    if "opponent_pool" in cfg:
+        env_cfg["opponent_pool"] = cfg["opponent_pool"]
     train_cfg = cfg.get("train", {})
     num_envs = int(train_cfg.get("num_envs", 1))
     vec_env_type = str(train_cfg.get("vec_env_type", "dummy")).lower()
@@ -137,6 +139,7 @@ def main() -> None:
         )
     early_cfg = cfg.get("early_stop", {})
     if early_cfg.get("enabled", False):
+        eval_opponent = str(early_cfg.get("opponent", cfg.get("env", {}).get("opponent_agent", "heuristic")))
         callbacks.append(
             EvalEarlyStopCallback(
                 checkpoint_dir=out,
@@ -147,7 +150,8 @@ def main() -> None:
                 min_delta=float(early_cfg.get("min_delta", 0.0)),
                 patience=int(early_cfg.get("patience", 5)),
                 min_timesteps=int(early_cfg.get("min_timesteps", 1000000)),
-                opponent=str(early_cfg.get("opponent", cfg.get("env", {}).get("opponent_agent", "heuristic"))),
+                opponent=eval_opponent,
+                opponent_pool=cfg.get("opponent_pool") if eval_opponent == "pool" else None,
                 seed_offset=int(early_cfg.get("seed_offset", 100000)),
                 verbose=1,
             )

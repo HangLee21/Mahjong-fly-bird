@@ -14,50 +14,48 @@ env:
 reward:
   score_scale: 10.0
   step_penalty: 0.001
-  discard_live_xiaoji_penalty: 0.04
-  discard_dead_xiaoji_penalty: 0.005
-  concealed_kong_bonus: 0.004
-  exposed_kong_penalty: 0.01
-  added_kong_penalty: 0.006
+  discard_live_xiaoji_penalty: 0.02
+  discard_dead_xiaoji_penalty: 0.0
+  concealed_kong_bonus: 0.003
+  exposed_kong_penalty: 0.006
+  added_kong_penalty: 0.004
+  shanten_improvement_bonus: 0.012
+  shanten_regression_penalty: 0.006
+  ready_bonus: 0.02
 model:
   policy: MlpPolicy
   device: cuda
-  activation_fn: gelu
-  ortho_init: false
-  feature_extractor:
-    name: layer_norm_mlp
-    hidden_dims: [1024, 1024]
-    features_dim: 1024
-    dropout: 0.02
+  activation_fn: tanh
   net_arch:
-    pi: [2048, 1024, 512]
-    vf: [2048, 1024, 512]
+    pi: [512, 512, 256]
+    vf: [512, 512, 256]
 train:
-  total_timesteps: 10000000
-  num_envs: 12
+  total_timesteps: 5000000
+  num_envs: 8
   vec_env_type: subproc
-  learning_rate: 0.0002
+  learning_rate: 0.00015
   n_steps: 2048
-  batch_size: 4096
+  batch_size: 2048
   n_epochs: 8
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.008
+  ent_coef: 0.015
   vf_coef: 0.5
   max_grad_norm: 0.5
 logging:
-  checkpoint_dir: artifacts/checkpoints/ppo_gpu_16g
+  checkpoint_dir: artifacts/checkpoints/ppo_tile_efficiency_resume
   checkpoint_freq: 500000
 early_stop:
   enabled: true
   eval_freq: 500000
-  num_games: 3000
+  num_games: 1000
   opponent: heuristic
   metric: avg_score
   mode: max
   min_delta: 0.01
-  patience: 5
-  min_timesteps: 1000000
+  patience: 6
+  min_timesteps: 1800000
   seed_offset: 100000
+
 

@@ -1,4 +1,4 @@
-from mahjong_ai.env.actions import ACTION_KONG_ADDED, ACTION_KONG_CONCEALED, ACTION_PASS, ACTION_WIN
+from mahjong_ai.env.actions import ACTION_KONG_ADDED, ACTION_KONG_CONCEALED, ACTION_PASS, ACTION_PONG, ACTION_WIN
 from mahjong_ai.rules.flybird import FlybirdRuleEngine, GameState, Meld, is_lanpai, is_seven_pairs, is_standard_win
 
 
@@ -53,3 +53,90 @@ def test_added_kong_skips_ineligible_pong_melds():
     next_state = engine.step(state, 0, ACTION_KONG_ADDED)
     assert next_state.melds[0][0].type == "pong"
     assert next_state.melds[0][1].type == "kong"
+
+
+def test_multi_ron_scores_all_winners():
+    engine = FlybirdRuleEngine()
+    state = engine.reset(seed=20)
+    state.hands[0] = [31, 0, 1, 2, 3, 4, 5, 9, 10, 11, 27, 28, 29, 30]
+    ready = [0, 1, 2, 3, 4, 5, 9, 10, 11, 27, 27, 27, 31]
+    state.hands[1] = ready[:]
+    state.hands[2] = ready[:]
+    state.hands[3] = [0, 2, 4, 6, 8, 9, 11, 13, 15, 17, 27, 28, 29]
+    state = engine.step(state, 0, 31)
+    assert ACTION_WIN in engine.get_legal_actions(state, 1)
+    state = engine.step(state, 1, ACTION_WIN)
+    assert state.terminal
+    assert state.winners == [1, 2]
+    assert state.scores[1] > 0 and state.scores[2] > 0 and state.scores[0] < 0
+
+
+def test_rob_kong_window_and_win():
+    engine = FlybirdRuleEngine()
+    state = engine.reset(seed=21)
+    state.hands[0] = [5, 0, 1, 2, 3, 4, 6, 9, 10, 11, 27]
+    state.melds[0] = [Meld("pong", [5, 5, 5])]
+    state.hands[1] = [0, 1, 2, 5, 9, 10, 11, 12, 13, 14, 27, 27, 27]
+    state.hands[2] = [0, 2, 4, 6, 8, 9, 11, 13, 15, 17, 27, 28, 29]
+    state.hands[3] = state.hands[2][:]
+    state = engine.step(state, 0, ACTION_KONG_ADDED)
+    assert state.pending.kind == "rob_kong"
+    assert ACTION_WIN in engine.get_legal_actions(state, 1)
+    state = engine.step(state, 1, ACTION_WIN)
+    assert state.terminal
+    assert state.win_type == "rob_kong"
+    assert "抢杠" in state.win_names
+
+
+def test_kong_after_discard_adds_gang_shang_pao_name():
+    engine = FlybirdRuleEngine()
+    state = engine.reset(seed=22)
+    state.last_kong_player = 0
+    state.current_player = 0
+    state.hands[0] = [31, 0, 1, 2, 3, 4, 5, 9, 10, 11, 27, 28, 29, 30]
+    state.hands[1] = [0, 1, 2, 3, 4, 5, 9, 10, 11, 27, 27, 27, 31]
+    state = engine.step(state, 0, 31)
+    state = engine.step(state, 1, ACTION_WIN)
+    assert "杠上炮" in state.win_names
+
+
+def test_same_round_furiten_and_reject_pong():
+    engine = FlybirdRuleEngine()
+    state = engine.reset(seed=23)
+    state.current_player = 0
+    state.hands[0] = [31, 0, 1, 2, 3, 4, 5, 9, 10, 11, 27, 28, 29, 30]
+    state.hands[1] = [0, 1, 2, 3, 4, 5, 9, 10, 11, 27, 27, 27, 31]
+    state = engine.step(state, 0, 31)
+    assert ACTION_WIN in engine.get_legal_actions(state, 1)
+    state = engine.step(state, 1, ACTION_PASS)
+    state.pending = type(state.pending)(discarder=2, tile=31, responders=[1])
+    assert ACTION_WIN not in engine.get_legal_actions(state, 1)
+
+    pong_state = engine.reset(seed=24)
+    pong_state.current_player = 0
+    pong_state.hands[0] = [5, 0, 1, 2, 3, 4, 6, 9, 10, 11, 27, 28, 29, 30]
+    pong_state.hands[1] = [5, 5, 0, 1, 2, 3, 4, 6, 9, 10, 11, 27, 28]
+    pong_state = engine.step(pong_state, 0, 5)
+    assert ACTION_PONG in engine.get_legal_actions(pong_state, 1)
+    pong_state = engine.step(pong_state, 1, ACTION_PASS)
+    pong_state.pending = type(pong_state.pending)(discarder=2, tile=5, responders=[1])
+    assert ACTION_PONG not in engine.get_legal_actions(pong_state, 1)
+
+
+def test_ten_winds_and_thirteen_special_wins():
+    engine = FlybirdRuleEngine()
+    state = engine.reset(seed=25)
+    state.current_player = 0
+    state.special_discards[0] = [27, 28, 29, 30, 31, 32, 33, 27, 28]
+    state.hands[0] = [29, 0, 1, 2]
+    state = engine.step(state, 0, 29)
+    assert state.terminal
+    assert state.win_names == ["十风"]
+
+    state = engine.reset(seed=26)
+    state.current_player = 0
+    state.special_discards[0] = [27, 28, 29, 30, 31, 32, 33, 0, 8, 9, 17, 18]
+    state.hands[0] = [26, 0, 1, 2]
+    state = engine.step(state, 0, 26)
+    assert state.terminal
+    assert state.win_names == ["十三幺有鸡"]

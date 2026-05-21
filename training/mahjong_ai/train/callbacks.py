@@ -27,6 +27,7 @@ class EvalEarlyStopCallback(BaseCallback):
         patience: int = 5,
         min_timesteps: int = 0,
         opponent: str = "heuristic",
+        opponent_pool: dict | None = None,
         seed_offset: int = 100000,
         verbose: int = 1,
     ):
@@ -42,6 +43,7 @@ class EvalEarlyStopCallback(BaseCallback):
         self.patience = int(patience)
         self.min_timesteps = int(min_timesteps)
         self.opponent = opponent
+        self.opponent_pool = opponent_pool
         self.seed_offset = int(seed_offset)
         self.best_value: float | None = None
         self.bad_evals = 0
@@ -51,6 +53,7 @@ class EvalEarlyStopCallback(BaseCallback):
     def _on_training_start(self) -> None:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         (self.checkpoint_dir / "evals").mkdir(parents=True, exist_ok=True)
+        self.last_eval_step = int(self.num_timesteps)
 
     def _on_step(self) -> bool:
         if self.num_timesteps < self.min_timesteps:
@@ -63,10 +66,17 @@ class EvalEarlyStopCallback(BaseCallback):
         model_path = self.checkpoint_dir / "evals" / f"eval_model_{step}_steps.zip"
         report_path = self.checkpoint_dir / "evals" / f"eval_{step}_steps.json"
         self.model.save(model_path)
+        if self.verbose:
+            print(
+                "[early_stop] "
+                f"evaluating step={step} games={self.num_games} "
+                f"opponent={self.opponent} metric={self.metric}"
+            )
         report = evaluate(
             str(model_path),
             self.num_games,
             opponent=self.opponent,
+            opponent_pool=self.opponent_pool,
             seed_offset=self.seed_offset,
         )
         report["timesteps"] = step

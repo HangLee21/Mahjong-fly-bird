@@ -1,4 +1,4 @@
-seed: 2026
+﻿seed: 2026
 env:
   controlled_player: 0
   max_steps_per_game: 300
@@ -40,10 +40,10 @@ train:
   max_grad_norm: 0.5
 logging:
   checkpoint_dir: artifacts/checkpoints/ppo_gpu_strong
-  checkpoint_freq: 100000
+  checkpoint_freq: 500000
 early_stop:
   enabled: true
-  eval_freq: 100000
+  eval_freq: 500000
   num_games: 3000
   opponent: heuristic
   metric: avg_score
@@ -52,4 +52,5 @@ early_stop:
   patience: 5
   min_timesteps: 1000000
   seed_offset: 100000
+
 

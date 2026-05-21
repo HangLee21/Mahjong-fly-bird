@@ -1,4 +1,4 @@
-seed: 2026
+﻿seed: 2026
 env:
   controlled_player: 0
   max_steps_per_game: 300
@@ -19,4 +19,5 @@ train:
   gamma: 0.99
 logging:
   checkpoint_dir: artifacts/checkpoints/debug
+
 

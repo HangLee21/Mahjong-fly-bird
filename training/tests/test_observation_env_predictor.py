@@ -32,10 +32,15 @@ def test_gym_env_runs_steps():
         assert info["legal_actions"]
 
 
+def test_env_auto_skips_forced_pass():
+    env = MahjongSingleAgentEnv({"opponent_agent": "random", "max_steps_per_game": 120})
+    _, info = env.reset(seed=10)
+    assert info["legal_actions"] != [100]
+
+
 def test_predictor_fallback_returns_legal_action():
     predictor = MahjongPredictor()
     obs = np.zeros(get_observation_dim({}), dtype=np.float32)
     result = predictor.predict(obs, [3, 100])
     assert result["action"] in [3, 100]
     assert result["fallback_used"]
-

@@ -6,6 +6,8 @@ import time
 from collections import Counter
 from pathlib import Path
 
+import yaml
+
 from mahjong_ai.agents.heuristic_agent import HeuristicAgent, WinFirstAgent
 from mahjong_ai.agents.random_agent import RandomAgent
 from mahjong_ai.env.actions import (
@@ -39,11 +41,15 @@ def evaluate(
     num_games: int = 100,
     *,
     opponent: str = "heuristic",
+    opponent_pool: dict | None = None,
     seed_offset: int = 0,
     replay_output: str | None = None,
     include_observation: bool = False,
 ) -> dict:
-    env = MahjongSingleAgentEnv({"opponent_agent": opponent})
+    env_config = {"opponent_agent": opponent}
+    if opponent_pool is not None:
+        env_config["opponent_pool"] = opponent_pool
+    env = MahjongSingleAgentEnv(env_config)
     predictor = MahjongPredictor(model_path=model_path) if model_path else None
     fallback = _make_fallback_agent(opponent)
     counters: Counter[str] = Counter()
@@ -110,7 +116,8 @@ def evaluate(
             total_score += final_scores[0]
             for seat, score in enumerate(final_scores):
                 score_by_seat[seat] += score
-            counters["wins"] += int(winner == 0)
+            winners = list(info.get("winners", []))
+            counters["wins"] += int(winner == 0 or 0 in winners)
             counters["draws"] += int(draw)
             counters["controlled_deal_in"] += int(winner is not None and info["payer"] == 0)
             counters["controlled_self_draw_win"] += int(winner == 0 and info["win_type"] == "self_draw")
@@ -140,6 +147,7 @@ def evaluate(
     return {
         "model": model_path,
         "opponent": opponent,
+        "opponent_pool": opponent_pool,
         "num_games": num_games,
         "avg_score": total_score / num_games,
         "win_rate": counters["wins"] / num_games,
@@ -196,16 +204,23 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default=None)
     parser.add_argument("--num-games", type=int, default=100)
-    parser.add_argument("--opponent", choices=["heuristic", "random", "win_first"], default="heuristic")
+    parser.add_argument("--opponent", choices=["heuristic", "random", "win_first", "pool"], default="heuristic")
+    parser.add_argument("--opponent-pool-config", default=None)
     parser.add_argument("--seed-offset", type=int, default=0)
     parser.add_argument("--output", default=None)
     parser.add_argument("--replay-output", default=None)
     parser.add_argument("--include-observation", action="store_true")
     args = parser.parse_args()
+    opponent_pool = None
+    if args.opponent_pool_config:
+        with open(args.opponent_pool_config, "r", encoding="utf-8") as f:
+            raw_pool_cfg = yaml.safe_load(f) or {}
+        opponent_pool = raw_pool_cfg.get("opponent_pool", raw_pool_cfg)
     result = evaluate(
         args.model,
         args.num_games,
         opponent=args.opponent,
+        opponent_pool=opponent_pool,
         seed_offset=args.seed_offset,
         replay_output=args.replay_output,
         include_observation=args.include_observation,

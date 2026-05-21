@@ -1,4 +1,4 @@
-seed: 2026
+﻿seed: 2026
 cuda:
   allow_tf32: true
   matmul_precision: high
@@ -35,4 +35,5 @@ logging:
   checkpoint_freq: 128
 early_stop:
   enabled: false
+
 

@@ -1,0 +1,75 @@
+seed: 2026
+cuda:
+  allow_tf32: true
+  matmul_precision: high
+  cudnn_benchmark: true
+  empty_cache_on_start: true
+  memory_fraction: 0.95
+  num_threads: 16
+env:
+  controlled_player: 0
+  max_steps_per_game: 300
+  obs_include_action_mask: false
+  opponent_agent: pool
+  allow_chow: true
+opponent_pool:
+  per_seat_sample: true
+  members:
+    - kind: heuristic
+      weight: 0.35
+    - kind: win_first
+      weight: 0.15
+    - kind: random
+      weight: 0.05
+    - kind: model
+      name: v1_2399980
+      weight: 0.45
+      model_path: artifacts/checkpoints/ppo_tile_efficiency_resume/periodic/model_2399980_steps.zip
+      device: cpu
+      deterministic: false
+reward:
+  score_scale: 10.0
+  step_penalty: 0.001
+  discard_live_xiaoji_penalty: 0.02
+  discard_dead_xiaoji_penalty: 0.0
+  concealed_kong_bonus: 0.004
+  exposed_kong_penalty: 0.008
+  added_kong_penalty: 0.005
+  shanten_improvement_bonus: 0.016
+  shanten_regression_penalty: 0.008
+  ready_bonus: 0.025
+model:
+  policy: MlpPolicy
+  device: cuda
+  activation_fn: tanh
+  net_arch:
+    pi: [512, 512, 256]
+    vf: [512, 512, 256]
+train:
+  total_timesteps: 10000000
+  num_envs: 16
+  vec_env_type: subproc
+  learning_rate: 0.00012
+  n_steps: 4096
+  batch_size: 8192
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.012
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+logging:
+  checkpoint_dir: artifacts/checkpoints/ppo_v2_from_240w
+  checkpoint_freq: 500000
+early_stop:
+  enabled: true
+  eval_freq: 500000
+  num_games: 3000
+  opponent: heuristic
+  metric: avg_score
+  mode: max
+  min_delta: 0.01
+  patience: 6
+  min_timesteps: 3000000
+  seed_offset: 100000
