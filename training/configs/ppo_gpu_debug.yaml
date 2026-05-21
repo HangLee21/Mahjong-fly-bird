@@ -1,0 +1,23 @@
+seed: 2026
+env:
+  controlled_player: 0
+  max_steps_per_game: 300
+  obs_include_action_mask: false
+  opponent_agent: heuristic
+  allow_chow: true
+reward:
+  score_scale: 10.0
+  step_penalty: 0.0
+model:
+  policy: MlpPolicy
+  device: cuda
+train:
+  total_timesteps: 2048
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 128
+  n_epochs: 4
+  gamma: 0.99
+logging:
+  checkpoint_dir: artifacts/checkpoints/gpu_debug
+

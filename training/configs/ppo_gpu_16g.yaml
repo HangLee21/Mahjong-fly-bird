@@ -1,0 +1,62 @@
+seed: 2026
+cuda:
+  allow_tf32: true
+  matmul_precision: high
+  cudnn_benchmark: true
+  empty_cache_on_start: true
+  memory_fraction: 0.92
+env:
+  controlled_player: 0
+  max_steps_per_game: 300
+  obs_include_action_mask: false
+  opponent_agent: heuristic
+  allow_chow: true
+reward:
+  score_scale: 10.0
+  step_penalty: 0.001
+  discard_live_xiaoji_penalty: 0.04
+  discard_dead_xiaoji_penalty: 0.005
+  concealed_kong_bonus: 0.004
+  exposed_kong_penalty: 0.01
+  added_kong_penalty: 0.006
+model:
+  policy: MlpPolicy
+  device: cuda
+  activation_fn: gelu
+  ortho_init: false
+  feature_extractor:
+    name: layer_norm_mlp
+    hidden_dims: [1024, 1024]
+    features_dim: 1024
+    dropout: 0.02
+  net_arch:
+    pi: [2048, 1024, 512]
+    vf: [2048, 1024, 512]
+train:
+  total_timesteps: 10000000
+  num_envs: 12
+  vec_env_type: subproc
+  learning_rate: 0.0002
+  n_steps: 2048
+  batch_size: 4096
+  n_epochs: 8
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.008
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+logging:
+  checkpoint_dir: artifacts/checkpoints/ppo_gpu_16g
+  checkpoint_freq: 100000
+early_stop:
+  enabled: true
+  eval_freq: 100000
+  num_games: 3000
+  opponent: heuristic
+  metric: avg_score
+  mode: max
+  min_delta: 0.01
+  patience: 5
+  min_timesteps: 1000000
+  seed_offset: 100000

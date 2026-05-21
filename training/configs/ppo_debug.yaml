@@ -1,0 +1,22 @@
+seed: 2026
+env:
+  controlled_player: 0
+  max_steps_per_game: 300
+  obs_include_action_mask: false
+  opponent_agent: heuristic
+  allow_chow: true
+reward:
+  score_scale: 10.0
+  step_penalty: 0.0
+model:
+  policy: MlpPolicy
+train:
+  total_timesteps: 1000
+  learning_rate: 0.0003
+  n_steps: 256
+  batch_size: 64
+  n_epochs: 4
+  gamma: 0.99
+logging:
+  checkpoint_dir: artifacts/checkpoints/debug
+
