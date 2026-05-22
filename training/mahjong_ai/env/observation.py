@@ -7,6 +7,19 @@ import numpy as np
 from mahjong_ai.env.actions import ACTION_SPACE_SIZE, N_TILE_TYPES, build_action_mask
 from mahjong_ai.rules.adapter import RuleAdapter
 
+HISTORY_EVENT_TYPES = {
+    "discard": 0,
+    "chow": 1,
+    "pong": 2,
+    "kong_exposed": 3,
+    "kong_concealed": 4,
+    "kong_added": 5,
+    "kong_draw": 6,
+    "pass": 7,
+    "win": 8,
+}
+HISTORY_EVENT_DIM = len(HISTORY_EVENT_TYPES) + 4 + 4 + (N_TILE_TYPES + 1) + 4
+
 
 def _count_vec(tiles: list[int], denom: float = 4.0) -> np.ndarray:
     vec = np.zeros(N_TILE_TYPES, dtype=np.float32)
@@ -33,7 +46,25 @@ def get_observation_dim(config: dict | None = None) -> int:
     return base + (ACTION_SPACE_SIZE if include_mask else 0)
 
 
+def is_history_observation(config: dict | None = None) -> bool:
+    cfg = config or {}
+    obs_cfg = cfg.get("observation", {})
+    version = str(obs_cfg.get("version", cfg.get("obs_version", "")))
+    return version in {"obs_v3_history", "v3_history"} or bool(obs_cfg.get("include_history", False))
+
+
 def build_observation(
+    rule_adapter: RuleAdapter,
+    state: Any,
+    player_id: int,
+    config: dict | None = None,
+) -> np.ndarray | dict[str, np.ndarray]:
+    if is_history_observation(config):
+        return build_history_observation(rule_adapter, state, player_id, config)
+    return build_static_observation(rule_adapter, state, player_id, config)
+
+
+def build_static_observation(
     rule_adapter: RuleAdapter,
     state: Any,
     player_id: int,
@@ -90,9 +121,64 @@ def build_observation(
     return obs
 
 
+def build_history_observation(
+    rule_adapter: RuleAdapter,
+    state: Any,
+    player_id: int,
+    config: dict | None = None,
+) -> dict[str, np.ndarray]:
+    cfg = config or {}
+    obs_cfg = cfg.get("observation", {})
+    history_len = int(obs_cfg.get("history_len", cfg.get("history_len", 128)))
+    static = build_static_observation(rule_adapter, state, player_id, config)
+    history, mask = encode_public_history(getattr(state, "public_events", []), player_id, history_len)
+    return {
+        "static": static.astype(np.float32),
+        "history": history.astype(np.float32),
+        "history_mask": mask.astype(np.float32),
+    }
+
+
+def encode_public_history(
+    events: list[dict],
+    player_id: int,
+    history_len: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    history = np.zeros((history_len, HISTORY_EVENT_DIM), dtype=np.float32)
+    mask = np.zeros((history_len,), dtype=np.float32)
+    selected = list(events[-history_len:])
+    offset = history_len - len(selected)
+    for i, event in enumerate(selected):
+        row = history[offset + i]
+        event_type = str(event.get("type", ""))
+        if event_type in HISTORY_EVENT_TYPES:
+            row[HISTORY_EVENT_TYPES[event_type]] = 1.0
+        cursor = len(HISTORY_EVENT_TYPES)
+        actor = int(event.get("player", 0))
+        if 0 <= actor < 4:
+            row[cursor + actor] = 1.0
+        cursor += 4
+        row[cursor + ((actor - player_id) % 4)] = 1.0
+        cursor += 4
+        tile = event.get("tile")
+        if tile is None:
+            row[cursor + N_TILE_TYPES] = 1.0
+        else:
+            tile_int = int(tile)
+            if 0 <= tile_int < N_TILE_TYPES:
+                row[cursor + tile_int] = 1.0
+        cursor += N_TILE_TYPES + 1
+        row[cursor] = min(1.0, float(event.get("step", 0)) / 300.0)
+        row[cursor + 1] = min(1.0, float(event.get("wall", 0)) / 136.0)
+        target = event.get("target")
+        row[cursor + 2] = 0.0 if target is None else ((int(target) - player_id) % 4) / 3.0
+        row[cursor + 3] = 1.0 if bool(event.get("xiaoji_disabled", False)) else 0.0
+        mask[offset + i] = 1.0
+    return history, mask
+
+
 def validate_observation(obs: np.ndarray, expected_dim: int) -> None:
     if obs.shape != (expected_dim,):
         raise ValueError(f"observation shape {obs.shape} != ({expected_dim},)")
     if not np.isfinite(obs).all():
         raise ValueError("observation contains NaN or inf")
-

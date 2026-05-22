@@ -19,9 +19,21 @@ reward:
   concealed_kong_bonus: 0.003
   exposed_kong_penalty: 0.006
   added_kong_penalty: 0.004
+  added_kong_as_concealed: true
+  added_kong_as_concealed_bonus: 0.003
+  added_kong_ready_bonus: 0.002
   shanten_improvement_bonus: 0.012
   shanten_regression_penalty: 0.006
   ready_bonus: 0.02
+  hand_goal_mode: committed
+  hand_goal_improvement_bonus: 0.002
+  hand_goal_regression_penalty: 0.001
+  hand_goal_switch_penalty: 0.005
+  terminal_win_bonus: 0.02
+  self_draw_bonus: 0.015
+  ron_bonus: 0.006
+  fan_bonus: 0.006
+  point_bonus: 0.002
 model:
   policy: MlpPolicy
   device: cuda

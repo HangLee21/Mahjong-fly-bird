@@ -8,7 +8,7 @@ from typing import Callable
 import yaml
 
 from mahjong_ai.env.gym_env import MahjongSingleAgentEnv
-from mahjong_ai.models.feature_extractor import LayerNormMLPExtractor
+from mahjong_ai.models.feature_extractor import HybridHistoryTransformerExtractor, LayerNormMLPExtractor
 from mahjong_ai.train.callbacks import EvalEarlyStopCallback
 from mahjong_ai.utils.torch_runtime import configure_torch_runtime
 
@@ -49,6 +49,18 @@ def build_policy_kwargs(model_cfg: dict) -> dict:
     extractor_cfg = model_cfg.get("feature_extractor", {})
     if extractor_cfg:
         name = extractor_cfg.get("name", "layer_norm_mlp")
+        if name == "hybrid_history_transformer":
+            policy_kwargs["features_extractor_class"] = HybridHistoryTransformerExtractor
+            policy_kwargs["features_extractor_kwargs"] = {
+                "features_dim": int(extractor_cfg.get("features_dim", 768)),
+                "static_hidden_dims": list(extractor_cfg.get("static_hidden_dims", [512, 512])),
+                "d_model": int(extractor_cfg.get("d_model", 128)),
+                "nhead": int(extractor_cfg.get("nhead", 4)),
+                "num_layers": int(extractor_cfg.get("num_layers", 2)),
+                "dropout": float(extractor_cfg.get("dropout", 0.05)),
+                "max_history_len": int(extractor_cfg.get("max_history_len", 128)),
+            }
+            return policy_kwargs
         if name != "layer_norm_mlp":
             raise ValueError(f"unsupported feature extractor: {name}")
         policy_kwargs["features_extractor_class"] = LayerNormMLPExtractor
@@ -82,6 +94,8 @@ def build_env(cfg: dict):
         raise SystemExit("stable-baselines3 is required for vectorized training") from exc
 
     env_cfg = {**cfg.get("env", {}), "reward": cfg.get("reward", {})}
+    if "observation" in cfg:
+        env_cfg["observation"] = cfg["observation"]
     if "opponent_pool" in cfg:
         env_cfg["opponent_pool"] = cfg["opponent_pool"]
     train_cfg = cfg.get("train", {})
@@ -173,6 +187,9 @@ def main() -> None:
                 "ent_coef": float(train_cfg.get("ent_coef", 0.0)),
                 "vf_coef": float(train_cfg.get("vf_coef", 0.5)),
                 "max_grad_norm": float(train_cfg.get("max_grad_norm", 0.5)),
+                "target_kl": None
+                if train_cfg.get("target_kl") in (None, "null")
+                else float(train_cfg.get("target_kl")),
             },
         )
         model.verbose = 1
@@ -192,6 +209,7 @@ def main() -> None:
             ent_coef=float(train_cfg.get("ent_coef", 0.0)),
             vf_coef=float(train_cfg.get("vf_coef", 0.5)),
             max_grad_norm=float(train_cfg.get("max_grad_norm", 0.5)),
+            target_kl=None if train_cfg.get("target_kl") in (None, "null") else float(train_cfg.get("target_kl")),
             verbose=1,
         )
     callback = callbacks[0] if len(callbacks) == 1 else CallbackList(callbacks) if callbacks else None

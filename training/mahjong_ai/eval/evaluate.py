@@ -42,11 +42,18 @@ def evaluate(
     *,
     opponent: str = "heuristic",
     opponent_pool: dict | None = None,
+    train_config: dict | None = None,
     seed_offset: int = 0,
     replay_output: str | None = None,
     include_observation: bool = False,
 ) -> dict:
-    env_config = {"opponent_agent": opponent}
+    train_config = train_config or {}
+    env_config = {**train_config.get("env", {})}
+    if "observation" in train_config:
+        env_config["observation"] = train_config["observation"]
+    env_config["opponent_agent"] = opponent
+    if "reward" in train_config:
+        env_config["reward"] = train_config["reward"]
     if opponent_pool is not None:
         env_config["opponent_pool"] = opponent_pool
     env = MahjongSingleAgentEnv(env_config)
@@ -206,6 +213,7 @@ def main() -> None:
     parser.add_argument("--num-games", type=int, default=100)
     parser.add_argument("--opponent", choices=["heuristic", "random", "win_first", "pool"], default="heuristic")
     parser.add_argument("--opponent-pool-config", default=None)
+    parser.add_argument("--config", default=None, help="Training config whose env/observation settings should be used.")
     parser.add_argument("--seed-offset", type=int, default=0)
     parser.add_argument("--output", default=None)
     parser.add_argument("--replay-output", default=None)
@@ -216,11 +224,16 @@ def main() -> None:
         with open(args.opponent_pool_config, "r", encoding="utf-8") as f:
             raw_pool_cfg = yaml.safe_load(f) or {}
         opponent_pool = raw_pool_cfg.get("opponent_pool", raw_pool_cfg)
+    train_config = None
+    if args.config:
+        with open(args.config, "r", encoding="utf-8") as f:
+            train_config = yaml.safe_load(f) or {}
     result = evaluate(
         args.model,
         args.num_games,
         opponent=args.opponent,
         opponent_pool=opponent_pool,
+        train_config=train_config,
         seed_offset=args.seed_offset,
         replay_output=args.replay_output,
         include_observation=args.include_observation,

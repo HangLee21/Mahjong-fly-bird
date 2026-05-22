@@ -15,7 +15,7 @@ from mahjong_ai.agents.heuristic_agent import HeuristicAgent, WinFirstAgent
 from mahjong_ai.agents.opponent_pool import OpponentPool
 from mahjong_ai.agents.random_agent import RandomAgent
 from mahjong_ai.env.actions import ACTION_PASS, ACTION_SPACE_SIZE, build_action_mask
-from mahjong_ai.env.observation import build_observation, get_observation_dim
+from mahjong_ai.env.observation import HISTORY_EVENT_DIM, build_observation, get_observation_dim, is_history_observation
 from mahjong_ai.env.reward import compute_reward
 from mahjong_ai.rules.flybird import FlybirdRuleEngine
 
@@ -36,13 +36,33 @@ class MahjongSingleAgentEnv(gym.Env if gym else object):
         self.opponent_pool = self._make_opponent_pool()
         self.opponents = self._make_opponents(self.opponent_kind)
         self.state: Any | None = None
-        self._last_obs: np.ndarray | None = None
-        self.observation_space = spaces.Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=(get_observation_dim(self.config),),
-            dtype=np.float32,
-        )
+        self._last_obs: Any | None = None
+        if is_history_observation(self.config):
+            history_len = int(self.config.get("observation", {}).get("history_len", self.config.get("history_len", 128)))
+            self.observation_space = spaces.Dict(
+                {
+                    "static": spaces.Box(
+                        low=-np.inf,
+                        high=np.inf,
+                        shape=(get_observation_dim(self.config),),
+                        dtype=np.float32,
+                    ),
+                    "history": spaces.Box(
+                        low=0.0,
+                        high=1.0,
+                        shape=(history_len, HISTORY_EVENT_DIM),
+                        dtype=np.float32,
+                    ),
+                    "history_mask": spaces.Box(low=0.0, high=1.0, shape=(history_len,), dtype=np.float32),
+                }
+            )
+        else:
+            self.observation_space = spaces.Box(
+                low=-np.inf,
+                high=np.inf,
+                shape=(get_observation_dim(self.config),),
+                dtype=np.float32,
+            )
         self.action_space = spaces.Discrete(ACTION_SPACE_SIZE)
 
     def reset(self, seed=None, options=None):
@@ -152,7 +172,7 @@ class MahjongSingleAgentEnv(gym.Env if gym else object):
                 self.state.draw = True
                 break
 
-    def _obs(self) -> np.ndarray:
+    def _obs(self) -> Any:
         assert self.state is not None
         self._last_obs = build_observation(self.rule_adapter, self.state, self.controlled_player, self.config)
         return self._last_obs

@@ -42,6 +42,7 @@ class Meld:
     from_player: int | None = None
     concealed: bool = False
     wildcard_as: int | None = None
+    added_from_pong: bool = False
 
 
 @dataclass
@@ -92,6 +93,7 @@ class GameState:
     special_discards: list[list[int]] = field(default_factory=lambda: [[] for _ in range(4)])
     discarded_non_special: list[bool] = field(default_factory=lambda: [False for _ in range(4)])
     kong_after_discard_player: int | None = None
+    public_events: list[dict] = field(default_factory=list)
 
 
 def tile_suit(tile: int) -> Suit:
@@ -259,13 +261,17 @@ def _has_wildcard_as_wild(tiles: list[int], wildcard_enabled: bool) -> bool:
     return is_win_shape(tiles, True) and not is_win_shape(tiles, False)
 
 
+def is_four_xiaoji(tiles: list[int], melds: list[Meld] | None = None) -> bool:
+    return tiles.count(WILDCARD) == 4 and not (melds or [])
+
+
 def score_hand(state: GameState, player_id: int, win_tile: int | None, self_draw: bool) -> dict:
     hand = sorted(state.hands[player_id])
     wildcard_enabled = not state.xiaoji_disabled
     fans: list[tuple[str, int]] = []
     fixed_points: list[tuple[str, int]] = []
 
-    if hand.count(WILDCARD) == 4 and not state.melds[player_id]:
+    if is_four_xiaoji(hand, state.melds[player_id]):
         return {"points": 8, "fan": 3, "names": ["四小鸡"], "can_ron": True}
 
     wildcard_as_wild = _has_wildcard_as_wild(hand, wildcard_enabled)
@@ -325,7 +331,13 @@ def score_hand(state: GameState, player_id: int, win_tile: int | None, self_draw
 
     if fixed_points:
         points = max(point for _, point in fixed_points)
-        return {"points": points, "fan": 0, "names": [n for n, _ in fixed_points], "can_ron": True}
+        names = [n for n, _ in fixed_points]
+        fan = 1 if points <= 2 else 2
+        if any(n == "无鸡" for n, _ in fans):
+            points = min(8, points * 2)
+            fan = min(3, fan + 1)
+            names.append("无鸡")
+        return {"points": points, "fan": fan, "names": names, "can_ron": True}
 
     fan = min(3, sum(v for _, v in fans))
     points = 2**fan
@@ -380,7 +392,11 @@ class FlybirdRuleEngine:
         if state.pending:
             return self._claim_actions(state, player_id)
         legal = [discard_action(tile) for tile in sorted(set(state.hands[player_id]))]
-        if is_win_shape(state.hands[player_id], not state.xiaoji_disabled) or self._can_special_self_win(state, player_id):
+        if (
+            is_win_shape(state.hands[player_id], not state.xiaoji_disabled)
+            or is_four_xiaoji(state.hands[player_id], state.melds[player_id])
+            or self._can_special_self_win(state, player_id)
+        ):
             legal.append(ACTION_WIN)
         legal.extend(self._concealed_kong_actions(state, player_id))
         legal.extend(self._added_kong_actions(state, player_id))
@@ -396,6 +412,7 @@ class FlybirdRuleEngine:
         if next_state.pending:
             self._apply_claim_action(next_state, player_id, action)
         elif action == ACTION_WIN:
+            self._record_event(next_state, "win", player_id)
             self._finish_win(next_state, player_id, self_draw=True, special_name=self._special_win_name(next_state, player_id))
         elif action in (ACTION_KONG_CONCEALED, ACTION_KONG_ADDED):
             self._apply_kong(next_state, player_id, action)
@@ -428,6 +445,7 @@ class FlybirdRuleEngine:
             "last_discard_player": state.last_discard_player,
             "xiaoji_disabled": state.xiaoji_disabled,
             "phase": state.phase,
+            "public_events": copy.deepcopy(state.public_events),
         }
 
     def get_private_info(self, state: GameState, player_id: int) -> dict:
@@ -554,6 +572,7 @@ class FlybirdRuleEngine:
         could_self_win_before_discard = is_win_shape(state.hands[player_id], not state.xiaoji_disabled)
         state.hands[player_id].remove(tile)
         state.discards[player_id].append(tile)
+        self._record_event(state, "discard", player_id, tile=tile)
         self._track_special_discard(state, player_id, tile)
         special_name = self._special_win_name(state, player_id)
         if special_name:
@@ -575,6 +594,7 @@ class FlybirdRuleEngine:
     def _apply_claim_action(self, state: GameState, player_id: int, action: int) -> None:
         assert state.pending is not None
         if action == ACTION_PASS:
+            self._record_event(state, "pass", player_id, tile=state.pending.tile, target_player=state.pending.discarder)
             legal_before_pass = self._claim_actions(state, player_id)
             if ACTION_WIN in legal_before_pass:
                 state.same_round_furiten[player_id].add(state.pending.tile)
@@ -592,6 +612,7 @@ class FlybirdRuleEngine:
         tile = state.pending.tile
         discarder = state.pending.discarder
         if action == ACTION_WIN:
+            self._record_event(state, "win", player_id, tile=tile, target_player=discarder)
             if state.pending.kind == "rob_kong":
                 self._finish_multi_ron(state, discarder, tile, win_type="rob_kong", base_points=3.0, extra_name="抢杠")
             else:
@@ -602,6 +623,7 @@ class FlybirdRuleEngine:
         if action == ACTION_PONG:
             self._remove_tiles(state.hands[player_id], [tile, tile])
             state.melds[player_id].append(Meld("pong", [tile, tile, tile], from_player=discarder))
+            self._record_event(state, "pong", player_id, tile=tile, target_player=discarder)
             state.current_player = player_id
             state.phase = "discard"
             state.pending = None
@@ -614,6 +636,7 @@ class FlybirdRuleEngine:
             else:
                 self._remove_tiles(state.hands[player_id], [tile, tile, WILDCARD])
             state.melds[player_id].append(Meld("kong", [tile] * 4, from_player=discarder))
+            self._record_event(state, "kong_exposed", player_id, tile=tile, target_player=discarder)
             state.pending = None
             state.first_round_active = False
             self._take_kong_tile(state, player_id, tile)
@@ -626,6 +649,7 @@ class FlybirdRuleEngine:
                 used = [tile - 2, tile - 1]
             self._remove_tiles(state.hands[player_id], used)
             state.melds[player_id].append(Meld("chow", sorted(used + [tile]), from_player=discarder))
+            self._record_event(state, "chow", player_id, tile=tile, target_player=discarder)
             if WILDCARD in used + [tile]:
                 state.xiaoji_disabled = True
             state.current_player = player_id
@@ -647,6 +671,7 @@ class FlybirdRuleEngine:
                 remove = [tile] * 4
             self._remove_tiles(hand, remove)
             state.melds[player_id].append(Meld("kong", [tile] * 4, concealed=True, wildcard_as=tile))
+            self._record_event(state, "kong_concealed", player_id, tile=tile)
             self._take_kong_tile(state, player_id, tile)
         elif action == ACTION_KONG_ADDED:
             for meld_index, meld in enumerate(state.melds[player_id]):
@@ -677,6 +702,8 @@ class FlybirdRuleEngine:
                         hand.remove(base)
                     meld.type = "kong"
                     meld.tiles = [base] * 4
+                    meld.added_from_pong = True
+                    self._record_event(state, "kong_added", player_id, tile=base)
                     self._take_kong_tile(state, player_id, base)
                     return
             raise ValueError("ACTION_KONG_ADDED has no eligible pong meld")
@@ -690,6 +717,7 @@ class FlybirdRuleEngine:
         gained = state.kong_pool.pop(0)
         state.hands[player_id].append(gained)
         state.hands[player_id].sort()
+        self._record_event(state, "kong_draw", player_id, tile=gained)
         if state.wall:
             state.kong_pool.append(state.wall.pop())
         state.kong_count += 1
@@ -778,7 +806,9 @@ class FlybirdRuleEngine:
             state.hands[player_id].remove(base)
         meld.type = "kong"
         meld.tiles = [base] * 4
+        meld.added_from_pong = True
         state.pending = None
+        self._record_event(state, "kong_added", player_id, tile=base)
         self._take_kong_tile(state, player_id, base)
 
     def _claim_winners(self, state: GameState, payer: int, tile: int) -> list[int]:
@@ -858,23 +888,47 @@ class FlybirdRuleEngine:
             score = score_hand(state, player_id, win_tile, self_draw)
         points = float(score["points"])
         if self_draw:
+            total_points = 0.0
             for p in range(4):
                 if p != player_id:
                     state.scores[p] -= points
                     state.scores[player_id] += points
+                    total_points += points
         else:
             assert payer is not None
             state.scores[payer] -= points
             state.scores[player_id] += points
+            total_points = points
         state.winner = player_id
         state.winners = [player_id]
         state.win_type = "self_draw" if self_draw else "ron"
         state.payer = None if self_draw else payer
-        state.win_points = points
+        state.win_points = total_points
         state.win_names = list(score["names"])
         state.terminal = True
         state.draw = False
         state.phase = "terminal"
+
+    def _record_event(
+        self,
+        state: GameState,
+        event_type: str,
+        player_id: int,
+        *,
+        tile: int | None = None,
+        target_player: int | None = None,
+    ) -> None:
+        state.public_events.append(
+            {
+                "type": event_type,
+                "player": int(player_id),
+                "target": None if target_player is None else int(target_player),
+                "tile": None if tile is None else int(tile),
+                "step": int(state.step_count),
+                "wall": len(state.wall),
+                "xiaoji_disabled": bool(state.xiaoji_disabled),
+            }
+        )
 
     @staticmethod
     def _remove_tiles(hand: list[int], tiles: list[int]) -> None:

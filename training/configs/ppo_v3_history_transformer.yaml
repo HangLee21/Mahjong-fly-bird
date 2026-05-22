@@ -5,6 +5,10 @@ cuda:
   cudnn_benchmark: true
   empty_cache_on_start: true
   memory_fraction: 0.95
+  num_threads: 16
+observation:
+  version: obs_v3_history
+  history_len: 128
 env:
   controlled_player: 0
   max_steps_per_game: 300
@@ -15,22 +19,29 @@ opponent_pool:
   per_seat_sample: true
   members:
     - kind: heuristic
-      weight: 0.35
+      weight: 0.30
     - kind: win_first
       weight: 0.15
     - kind: random
-      weight: 0.05
+      weight: 0.10
     - kind: model
-      name: v1_5899980
-      weight: 0.45
-      model_path: artifacts/checkpoints/ppo_gpu_small_16g_resume/periodic/model_5899980_steps.zip
+      name: v1_1000w
+      weight: 0.20
+      model_path: artifacts/checkpoints/ppo_v1_committed_scratch/periodic/model_10000000_steps.zip
+      device: cpu
+      deterministic: false
+    - kind: model
+      name: v2_1500w
+      weight: 0.25
+      model_path: artifacts/checkpoints/ppo_v2_committed_scratch/periodic/model_15000000_steps.zip
       device: cpu
       deterministic: false
 reward:
   score_scale: 10.0
-  step_penalty: 0.001
-  discard_live_xiaoji_penalty: 0.02
+  step_penalty: 0.0012
+  discard_live_xiaoji_penalty: 0.035
   discard_dead_xiaoji_penalty: 0.0
+  human_discard_preference_bonus: 0.003
   concealed_kong_bonus: 0.004
   exposed_kong_penalty: 0.008
   added_kong_penalty: 0.005
@@ -39,54 +50,59 @@ reward:
   added_kong_ready_bonus: 0.003
   shanten_improvement_bonus: 0.016
   shanten_regression_penalty: 0.008
-  ready_bonus: 0.025
+  ready_bonus: 0.03
   hand_goal_mode: committed
   hand_goal_improvement_bonus: 0.0025
   hand_goal_regression_penalty: 0.0012
-  hand_goal_switch_penalty: 0.006
-  terminal_win_bonus: 0.025
-  self_draw_bonus: 0.018
-  ron_bonus: 0.008
+  hand_goal_switch_penalty: 0.005
+  terminal_win_bonus: 0.03
+  self_draw_bonus: 0.02
+  ron_bonus: 0.01
   fan_bonus: 0.008
   point_bonus: 0.0025
 model:
-  policy: MlpPolicy
+  policy: MultiInputPolicy
   device: cuda
   activation_fn: gelu
   ortho_init: false
   feature_extractor:
-    name: layer_norm_mlp
-    hidden_dims: [1024, 1024, 512]
+    name: hybrid_history_transformer
+    static_hidden_dims: [512, 512]
+    d_model: 128
+    nhead: 4
+    num_layers: 2
     features_dim: 768
-    dropout: 0.02
+    dropout: 0.05
+    max_history_len: 128
   net_arch:
-    pi: [1024, 512, 256]
-    vf: [1024, 512, 256]
+    pi: [768, 384, 256]
+    vf: [768, 384, 256]
 train:
   total_timesteps: 15000000
   num_envs: 12
   vec_env_type: subproc
-  learning_rate: 0.00015
+  learning_rate: 0.00006
   n_steps: 2048
   batch_size: 4096
-  n_epochs: 10
+  n_epochs: 4
   gamma: 0.99
   gae_lambda: 0.95
-  clip_range: 0.2
-  ent_coef: 0.012
+  clip_range: 0.12
+  target_kl: 0.035
+  ent_coef: 0.018
   vf_coef: 0.5
   max_grad_norm: 0.5
 logging:
-  checkpoint_dir: artifacts/checkpoints/ppo_v2_strong_selfplay
+  checkpoint_dir: artifacts/checkpoints/ppo_v3_history_transformer
   checkpoint_freq: 500000
 early_stop:
   enabled: true
   eval_freq: 500000
   num_games: 3000
-  opponent: heuristic
+  opponent: pool
   metric: avg_score
   mode: max
   min_delta: 0.01
-  patience: 6
-  min_timesteps: 3000000
+  patience: 8
+  min_timesteps: 4000000
   seed_offset: 100000

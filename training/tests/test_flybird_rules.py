@@ -1,5 +1,14 @@
 from mahjong_ai.env.actions import ACTION_KONG_ADDED, ACTION_KONG_CONCEALED, ACTION_PASS, ACTION_PONG, ACTION_WIN
-from mahjong_ai.rules.flybird import FlybirdRuleEngine, GameState, Meld, is_lanpai, is_seven_pairs, is_standard_win
+from mahjong_ai.rules.flybird import (
+    FlybirdRuleEngine,
+    GameState,
+    Meld,
+    is_four_xiaoji,
+    is_lanpai,
+    is_seven_pairs,
+    is_standard_win,
+    score_hand,
+)
 
 
 def test_standard_win_with_xiaoji_wildcard():
@@ -53,6 +62,19 @@ def test_added_kong_skips_ineligible_pong_melds():
     next_state = engine.step(state, 0, ACTION_KONG_ADDED)
     assert next_state.melds[0][0].type == "pong"
     assert next_state.melds[0][1].type == "kong"
+    assert next_state.melds[0][1].added_from_pong
+    assert not next_state.melds[0][1].concealed
+
+
+def test_kong_pool_stays_two_tiles_after_kong_when_wall_available():
+    engine = FlybirdRuleEngine()
+    state = engine.reset(seed=40)
+    state.hands[0] = [31, 31, 31, 31, 0, 1, 2, 3, 4, 5, 9, 10, 11, 27]
+    before_wall = len(state.wall)
+    assert len(state.kong_pool) == 2
+    next_state = engine.step(state, 0, ACTION_KONG_CONCEALED)
+    assert len(next_state.kong_pool) == 2
+    assert len(next_state.wall) == before_wall - 1
 
 
 def test_multi_ron_scores_all_winners():
@@ -140,3 +162,54 @@ def test_ten_winds_and_thirteen_special_wins():
     state = engine.step(state, 0, 26)
     assert state.terminal
     assert state.win_names == ["十三幺有鸡"]
+
+
+def test_four_xiaoji_is_immediate_special_win():
+    engine = FlybirdRuleEngine()
+    state = engine.reset(seed=41)
+    state.hands[0] = [18, 18, 18, 18, 0, 1, 2, 3, 4, 5, 9, 10, 11, 27]
+    assert is_four_xiaoji(state.hands[0], state.melds[0])
+    assert ACTION_WIN in engine.get_legal_actions(state, 0)
+    state = engine.step(state, 0, ACTION_WIN)
+    assert state.terminal
+    assert state.win_names == ["四小鸡"]
+    assert state.win_points == 24.0
+
+
+def test_lanpai_and_qixing_lanpai_score_without_menqing_stack():
+    engine = FlybirdRuleEngine()
+    state = engine.reset(seed=42)
+    state.hands[0] = [0, 3, 6, 10, 13, 16, 20, 23, 26, 27, 28, 29, 30, 31]
+    score = score_hand(state, 0, 31, self_draw=True)
+    assert "烂牌" in score["names"]
+    assert "门清自摸" not in score["names"]
+    assert score["points"] == 4
+
+    state.hands[0] = [0, 3, 6, 10, 13, 16, 20, 27, 28, 29, 30, 31, 32, 33]
+    score = score_hand(state, 0, 33, self_draw=True)
+    assert "七星烂牌" in score["names"]
+    assert score["points"] == 8
+
+
+def test_nested_qingyise_dadui_scores_as_capped_compound_fan():
+    engine = FlybirdRuleEngine()
+    state = engine.reset(seed=43)
+    state.hands[0] = [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4]
+    score = score_hand(state, 0, 4, self_draw=True)
+    assert "清一色" in score["names"]
+    assert "大对" in score["names"]
+    assert score["fan"] == 3
+    assert score["points"] == 8
+
+
+def test_gangshang_flower_and_five_plum_score():
+    engine = FlybirdRuleEngine()
+    state = engine.reset(seed=44)
+    state.last_draw_from_kong = True
+    state.last_kong_player = 0
+    state.hands[0] = [9, 10, 11, 12, 12, 12, 13, 13, 13, 14, 15, 16, 17, 17]
+    score = score_hand(state, 0, 13, self_draw=True)
+    assert "杠上开花" in score["names"]
+    assert "五梅花" in score["names"]
+    assert score["fan"] == 3
+    assert score["points"] == 8

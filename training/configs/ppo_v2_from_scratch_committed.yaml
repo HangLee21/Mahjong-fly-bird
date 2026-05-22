@@ -5,6 +5,7 @@ cuda:
   cudnn_benchmark: true
   empty_cache_on_start: true
   memory_fraction: 0.95
+  num_threads: 16
 env:
   controlled_player: 0
   max_steps_per_game: 300
@@ -15,17 +16,11 @@ opponent_pool:
   per_seat_sample: true
   members:
     - kind: heuristic
-      weight: 0.35
+      weight: 0.55
     - kind: win_first
-      weight: 0.15
+      weight: 0.25
     - kind: random
-      weight: 0.05
-    - kind: model
-      name: v1_5899980
-      weight: 0.45
-      model_path: artifacts/checkpoints/ppo_gpu_small_16g_resume/periodic/model_5899980_steps.zip
-      device: cpu
-      deterministic: false
+      weight: 0.20
 reward:
   score_scale: 10.0
   step_penalty: 0.001
@@ -64,11 +59,11 @@ model:
     vf: [1024, 512, 256]
 train:
   total_timesteps: 15000000
-  num_envs: 12
+  num_envs: 16
   vec_env_type: subproc
   learning_rate: 0.00015
-  n_steps: 2048
-  batch_size: 4096
+  n_steps: 4096
+  batch_size: 8192
   n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
@@ -77,7 +72,7 @@ train:
   vf_coef: 0.5
   max_grad_norm: 0.5
 logging:
-  checkpoint_dir: artifacts/checkpoints/ppo_v2_strong_selfplay
+  checkpoint_dir: artifacts/checkpoints/ppo_v2_committed_scratch
   checkpoint_freq: 500000
 early_stop:
   enabled: true
@@ -87,6 +82,6 @@ early_stop:
   metric: avg_score
   mode: max
   min_delta: 0.01
-  patience: 6
-  min_timesteps: 3000000
+  patience: 8
+  min_timesteps: 4000000
   seed_offset: 100000

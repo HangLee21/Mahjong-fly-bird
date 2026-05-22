@@ -37,8 +37,11 @@ class ModelAgent(BaseAgent):
         try:
             model = self._load_model()
             mask = build_action_mask(legal_actions)
+            model_observation = observation
+            if isinstance(observation, dict) and not hasattr(getattr(model, "observation_space", None), "spaces"):
+                model_observation = observation.get("static", observation)
             action, _ = model.predict(
-                observation,
+                model_observation,
                 action_masks=mask,
                 deterministic=self.deterministic,
             )

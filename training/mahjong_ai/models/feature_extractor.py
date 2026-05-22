@@ -45,3 +45,71 @@ class LayerNormMLPExtractor(BaseFeaturesExtractor):
     def forward(self, observations: th.Tensor) -> th.Tensor:
         return self.net(observations.float())
 
+
+class HybridHistoryTransformerExtractor(BaseFeaturesExtractor):
+    """Encode static Mahjong state plus ordered public action history."""
+
+    def __init__(
+        self,
+        observation_space: Any,
+        features_dim: int = 768,
+        static_hidden_dims: list[int] | tuple[int, ...] = (512, 512),
+        d_model: int = 128,
+        nhead: int = 4,
+        num_layers: int = 2,
+        dropout: float = 0.05,
+        max_history_len: int = 128,
+    ):
+        super().__init__(observation_space, features_dim)
+        static_dim = int(observation_space.spaces["static"].shape[0])
+        event_dim = int(observation_space.spaces["history"].shape[-1])
+        history_len = int(observation_space.spaces["history"].shape[0])
+        self.history_len = min(history_len, int(max_history_len))
+
+        static_layers: list[nn.Module] = []
+        prev_dim = static_dim
+        for hidden_dim in static_hidden_dims:
+            static_layers.append(nn.Linear(prev_dim, int(hidden_dim)))
+            static_layers.append(nn.LayerNorm(int(hidden_dim)))
+            static_layers.append(nn.GELU())
+            if dropout > 0:
+                static_layers.append(nn.Dropout(float(dropout)))
+            prev_dim = int(hidden_dim)
+        static_layers.append(nn.Linear(prev_dim, int(d_model)))
+        static_layers.append(nn.LayerNorm(int(d_model)))
+        static_layers.append(nn.GELU())
+        self.static_net = nn.Sequential(*static_layers)
+
+        self.event_proj = nn.Sequential(
+            nn.Linear(event_dim, int(d_model)),
+            nn.LayerNorm(int(d_model)),
+            nn.GELU(),
+        )
+        self.pos_embedding = nn.Parameter(th.zeros(1, history_len, int(d_model)))
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=int(d_model),
+            nhead=int(nhead),
+            dim_feedforward=int(d_model) * 4,
+            dropout=float(dropout),
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.history_encoder = nn.TransformerEncoder(encoder_layer, num_layers=int(num_layers))
+        self.fusion = nn.Sequential(
+            nn.Linear(int(d_model) * 2, features_dim),
+            nn.LayerNorm(features_dim),
+            nn.GELU(),
+            nn.Dropout(float(dropout)) if dropout > 0 else nn.Identity(),
+        )
+
+    def forward(self, observations: dict[str, th.Tensor]) -> th.Tensor:
+        static = self.static_net(observations["static"].float())
+        history = observations["history"].float()
+        mask = observations["history_mask"].float().unsqueeze(-1)
+        encoded = self.event_proj(history) + self.pos_embedding[:, : history.shape[1], :]
+        encoded = self.history_encoder(encoded)
+        masked = encoded * mask
+        denom = mask.sum(dim=1).clamp_min(1.0)
+        history_features = masked.sum(dim=1) / denom
+        return self.fusion(th.cat([static, history_features], dim=1))
