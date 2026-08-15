@@ -14,6 +14,8 @@ uses 100 games vs the heuristic baseline unless noted.
 | `bc_then_ppo_240k_pool/final_model.zip` | 240k | mixed opponent pool | 0.10 | -0.80 | 0.13 | 0.0 | pool curriculum hurt vs heuristic |
 | `bc_then_ppo_240k_bcaux/final_model.zip` | 240k | BC aux during PPO | 0.0 | -1.72 | 0.25 | - | BC aux hurt with weak data |
 | `bc_then_ppo_medium/bc_model.zip` | BC only | 10 epochs, 321 traces | 0.0 | -1.3 | 0.12 | 0.0 | human data alone too weak |
+| `bc_then_ppo_330k/final_model.zip` | 330k | longer heuristic PPO | 0.093 | -0.84 | 0.147 | 0.0 | 150 games; ep_rew up but win flat |
+| `bc_then_ppo_minimal/final_model.zip` | 60k | minimal sparse reward from scratch | 0.0 | -1.04 | 0.13 | 0.0 | sparse reward can't learn in 60k |
 
 ## Conclusion
 
@@ -21,6 +23,10 @@ uses 100 games vs the heuristic baseline unless noted.
   produces legal, low-kong models.
 - With only 321 human traces and foreground single-GPU training, the policy
   plateaus around 10-17% win rate vs the heuristic baseline.
+- At 330k steps the shaped reward improves (`ep_rew` up) but win rate stays
+  flat, indicating dense shaping is partially gamed. Switching to a minimal
+  sparse reward from scratch underperforms at 60k steps. Both regimes are
+  limited by the small dataset and single-GPU foreground throughput.
 - Reward changes, opponent-pool curricula, and BC-aux on resume all degrade the
   best checkpoint, so reward/opponent iterations should be retrained from
   scratch rather than resumed.
