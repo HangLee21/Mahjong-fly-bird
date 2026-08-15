@@ -19,6 +19,8 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from stable_baselines3.common.callbacks import BaseCallback
+
 from mahjong_ai.train.train_ppo import build_env, build_policy_kwargs, load_config
 
 
@@ -69,6 +71,41 @@ def run_bc(model, static: np.ndarray, table: np.ndarray, actions: np.ndarray, ep
         print(f"BC epoch {epoch + 1}/{epochs} avg_loss={total_loss / max(1, total):.4f}")
 
 
+class BcAuxCallback(BaseCallback):
+    """Keep pulling the policy toward human actions during PPO."""
+
+    def __init__(self, static: np.ndarray, table: np.ndarray, actions: np.ndarray, batch_size: int, steps: int):
+        super().__init__()
+        self.static = static
+        self.table = table
+        self.actions = actions
+        self.batch_size = batch_size
+        self.steps = steps
+
+    def _on_step(self) -> bool:
+        return True
+
+    def on_rollout_end(self) -> None:
+        policy = self.model.policy
+        optimizer = policy.optimizer
+        device = self.model.device
+        total = len(self.actions)
+        if total == 0 or self.steps <= 0:
+            return
+        idx = np.random.default_rng().integers(0, total, size=(self.steps, self.batch_size))
+        for batch in idx:
+            obs = {
+                "static": torch.as_tensor(self.static[batch], device=device),
+                "table": torch.as_tensor(self.table[batch], device=device),
+            }
+            act = torch.as_tensor(self.actions[batch], device=device)
+            _, log_prob, _ = policy.evaluate_actions(obs, act)
+            loss = -log_prob.mean()
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -77,6 +114,8 @@ def main() -> None:
     parser.add_argument("--bc-batch-size", type=int, default=256)
     parser.add_argument("--output-dir", default="artifacts/checkpoints/bc_then_ppo")
     parser.add_argument("--resume", default=None, help="Skip BC and continue PPO from a saved checkpoint.")
+    parser.add_argument("--bc-aux-steps", type=int, default=0, help="BC gradient steps per rollout during PPO.")
+    parser.add_argument("--bc-aux-batch", type=int, default=256)
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -136,8 +175,14 @@ def main() -> None:
 
     total_timesteps = int(train_cfg.get("total_timesteps", 0))
     if total_timesteps > 0:
-        print(f"Starting PPO fine-tune for {total_timesteps} timesteps.")
-        model.learn(total_timesteps=total_timesteps)
+        callback = None
+        if args.bc_aux_steps > 0:
+            static, table, actions = load_traces(Path(args.bc_data))
+            callback = BcAuxCallback(static, table, actions, args.bc_aux_batch, args.bc_aux_steps)
+            print(f"PPO fine-tune with BC aux ({args.bc_aux_steps} steps/rollout) for {total_timesteps} timesteps.")
+        else:
+            print(f"Starting PPO fine-tune for {total_timesteps} timesteps.")
+        model.learn(total_timesteps=total_timesteps, callback=callback)
         model.save(str(out / "final_model.zip"))
         print(f"Saved fine-tuned model to {out / 'final_model.zip'}")
 
