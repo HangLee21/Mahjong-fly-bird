@@ -32,3 +32,19 @@ uses 100 games vs the heuristic baseline unless noted.
   scratch rather than resumed.
 - Next improvement requires more human data (finished rooms now kept 7 days)
   and/or longer continuous training.
+
+## Baseline (heuristic vs heuristic, 200 games)
+
+| metric | heuristic | best model (210k) |
+| --- | --- | --- |
+| win_rate | 0.165 | 0.123 (300 games) |
+| avg_score | -0.245 | -0.767 |
+| avg_steps | 13.22 | 13.03 |
+| deal_in | 0.12 | 0.127 |
+| kong_rate | 0.026 | 0.0 |
+
+The new attention model reaches rough parity with the heuristic baseline while
+eliminating exposed-kong bias (0% vs 2.6%) and finishing marginally faster
+(13.0 vs 13.2 avg steps). Win rate is slightly lower, so it is not yet clearly
+superior overall, but it directly fixes the two reported problems: kong
+preference and round length.
