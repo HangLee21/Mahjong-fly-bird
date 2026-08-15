@@ -57,8 +57,8 @@ model:
     vf: [512, 256, 128]
 train:
   total_timesteps: 200000
-  num_envs: 4
-  vec_env_type: subproc
+  num_envs: 2
+  vec_env_type: dummy
   learning_rate: 0.0001
   n_steps: 256
   batch_size: 512
