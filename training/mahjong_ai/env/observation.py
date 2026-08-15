@@ -19,6 +19,7 @@ HISTORY_EVENT_TYPES = {
     "win": 8,
 }
 HISTORY_EVENT_DIM = len(HISTORY_EVENT_TYPES) + 4 + 4 + (N_TILE_TYPES + 1) + 4
+SEAT_DIM = N_TILE_TYPES + N_TILE_TYPES + 1 + 1 + 1 + 4 + 1
 
 
 def _count_vec(tiles: list[int], denom: float = 4.0) -> np.ndarray:
@@ -53,6 +54,12 @@ def is_history_observation(config: dict | None = None) -> bool:
     return version in {"obs_v3_history", "v3_history"} or bool(obs_cfg.get("include_history", False))
 
 
+def include_table_observation(config: dict | None = None) -> bool:
+    cfg = config or {}
+    obs_cfg = cfg.get("observation", {})
+    return bool(obs_cfg.get("include_table", cfg.get("obs_include_table", False)))
+
+
 def build_observation(
     rule_adapter: RuleAdapter,
     state: Any,
@@ -61,7 +68,47 @@ def build_observation(
 ) -> np.ndarray | dict[str, np.ndarray]:
     if is_history_observation(config):
         return build_history_observation(rule_adapter, state, player_id, config)
-    return build_static_observation(rule_adapter, state, player_id, config)
+    static = build_static_observation(rule_adapter, state, player_id, config)
+    if include_table_observation(config):
+        return {
+            "static": static.astype(np.float32),
+            "table": build_table_tokens(rule_adapter, state, player_id),
+        }
+    return static
+
+
+def build_table_tokens(rule_adapter: RuleAdapter, state: Any, player_id: int) -> np.ndarray:
+    """Encode each seat as a token so an attention head can see the whole table.
+
+    A seat token contains only public information: that seat's discards, open
+    melds, score, dealer/current flags, relative position, and concealed hand
+    count. The controlled player's private hand is not leaked here; it stays in
+    the static observation.
+    """
+
+    public = rule_adapter.get_public_info(state)
+    dealer = int(public["dealer"])
+    current = int(public["current_player"])
+    tokens = np.zeros((4, SEAT_DIM), dtype=np.float32)
+    for seat in range(4):
+        discards = _count_vec(list(public["discards"][seat]))
+        meld_tiles = _count_vec([t for m in public["melds"][seat] for t in getattr(m, "tiles", [])])
+        score = float(public["scores"][seat]) / 100.0
+        relative = np.zeros(4, dtype=np.float32)
+        relative[(seat - player_id) % 4] = 1.0
+        hand_count = min(1.0, len(getattr(state, "hands", [[], [], [], []])[seat]) / 14.0)
+        tokens[seat] = np.concatenate(
+            [
+                discards,
+                meld_tiles,
+                np.asarray([score], dtype=np.float32),
+                np.asarray([1.0 if seat == dealer else 0.0], dtype=np.float32),
+                np.asarray([1.0 if seat == current else 0.0], dtype=np.float32),
+                relative,
+                np.asarray([hand_count], dtype=np.float32),
+            ]
+        )
+    return tokens.astype(np.float32)
 
 
 def build_static_observation(
@@ -132,11 +179,14 @@ def build_history_observation(
     history_len = int(obs_cfg.get("history_len", cfg.get("history_len", 128)))
     static = build_static_observation(rule_adapter, state, player_id, config)
     history, mask = encode_public_history(getattr(state, "public_events", []), player_id, history_len)
-    return {
+    result: dict[str, np.ndarray] = {
         "static": static.astype(np.float32),
         "history": history.astype(np.float32),
         "history_mask": mask.astype(np.float32),
     }
+    if include_table_observation(config):
+        result["table"] = build_table_tokens(rule_adapter, state, player_id)
+    return result
 
 
 def encode_public_history(

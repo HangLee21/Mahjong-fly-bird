@@ -8,7 +8,11 @@ from typing import Callable
 import yaml
 
 from mahjong_ai.env.gym_env import MahjongSingleAgentEnv
-from mahjong_ai.models.feature_extractor import HybridHistoryTransformerExtractor, LayerNormMLPExtractor
+from mahjong_ai.models.feature_extractor import (
+    HybridHistoryTransformerExtractor,
+    LayerNormMLPExtractor,
+    TableAttentionTransformerExtractor,
+)
 from mahjong_ai.train.callbacks import EvalEarlyStopCallback
 from mahjong_ai.utils.torch_runtime import configure_torch_runtime
 
@@ -51,6 +55,18 @@ def build_policy_kwargs(model_cfg: dict) -> dict:
         name = extractor_cfg.get("name", "layer_norm_mlp")
         if name == "hybrid_history_transformer":
             policy_kwargs["features_extractor_class"] = HybridHistoryTransformerExtractor
+            policy_kwargs["features_extractor_kwargs"] = {
+                "features_dim": int(extractor_cfg.get("features_dim", 768)),
+                "static_hidden_dims": list(extractor_cfg.get("static_hidden_dims", [512, 512])),
+                "d_model": int(extractor_cfg.get("d_model", 128)),
+                "nhead": int(extractor_cfg.get("nhead", 4)),
+                "num_layers": int(extractor_cfg.get("num_layers", 2)),
+                "dropout": float(extractor_cfg.get("dropout", 0.05)),
+                "max_history_len": int(extractor_cfg.get("max_history_len", 128)),
+            }
+            return policy_kwargs
+        if name == "table_attention_transformer":
+            policy_kwargs["features_extractor_class"] = TableAttentionTransformerExtractor
             policy_kwargs["features_extractor_kwargs"] = {
                 "features_dim": int(extractor_cfg.get("features_dim", 768)),
                 "static_hidden_dims": list(extractor_cfg.get("static_hidden_dims", [512, 512])),

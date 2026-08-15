@@ -28,6 +28,7 @@ import numpy as np
 
 
 N_TILE_TYPES = 34
+SEAT_DIM = N_TILE_TYPES + N_TILE_TYPES + 1 + 1 + 1 + 4 + 1
 OBS_DIM = (
     N_TILE_TYPES  # own hand
     + N_TILE_TYPES  # own meld tiles
@@ -61,6 +62,37 @@ def one_hot(index: int | None, size: int) -> np.ndarray:
     if index is not None and 0 <= int(index) < size:
         vec[int(index)] = 1.0
     return vec
+
+
+def table_tokens(
+    discards_before: list[list[int]],
+    melds_before: list[list[dict[str, Any]]],
+    scores: list[float],
+    dealer: int,
+    current: int,
+    player_index: int,
+    hand_counts: list[int],
+) -> list[list[float]]:
+    tokens = np.zeros((4, SEAT_DIM), dtype=np.float32)
+    for seat in range(4):
+        discards = count_vec(discards_before[seat])
+        meld_tiles = count_vec([int(t) for m in melds_before[seat] for t in (m.get("tiles") or [])])
+        score = float(scores[seat]) / 100.0
+        relative = np.zeros(4, dtype=np.float32)
+        relative[(seat - player_index) % 4] = 1.0
+        hand_count = min(1.0, float(hand_counts[seat]) / 14.0)
+        tokens[seat] = np.concatenate(
+            [
+                discards,
+                meld_tiles,
+                np.asarray([score], dtype=np.float32),
+                np.asarray([1.0 if seat == dealer else 0.0], dtype=np.float32),
+                np.asarray([1.0 if seat == current else 0.0], dtype=np.float32),
+                relative,
+                np.asarray([hand_count], dtype=np.float32),
+            ]
+        )
+    return tokens.round(6).tolist()
 
 
 def seats_from_view(view: dict[str, Any]) -> list[dict[str, Any]]:
@@ -166,6 +198,18 @@ def reconstruct_before(record: dict[str, Any]) -> dict[str, Any] | None:
 
     return {
         "observation": observation,
+        "table": table_tokens(
+            discards_before,
+            melds_before,
+            scores,
+            dealer,
+            current,
+            player_index,
+            [
+                len(hand_before) if i == player_index else int(seats[i].get("handCount", 0))
+                for i in range(4)
+            ],
+        ),
         "legal_actions": [int(a) for a in (record.get("legalActions") or [])],
         "action": int(action.get("actionId", -1)),
         "meta": {

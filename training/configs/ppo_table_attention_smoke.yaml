@@ -1,0 +1,58 @@
+seed: 2026
+cuda:
+  allow_tf32: true
+  matmul_precision: high
+  cudnn_benchmark: true
+  empty_cache_on_start: true
+  memory_fraction: 0.8
+  num_threads: 8
+observation:
+  include_table: true
+env:
+  controlled_player: 0
+  max_steps_per_game: 120
+  opponent_agent: heuristic
+  allow_chow: true
+reward:
+  score_scale: 6.0
+  step_penalty: 0.001
+  shanten_improvement_bonus: 0.01
+  shanten_regression_penalty: 0.005
+  ready_bonus: 0.02
+  terminal_win_bonus: 0.02
+  self_draw_bonus: 0.01
+  discard_danger_penalty: 0.02
+model:
+  policy: MultiInputPolicy
+  device: cuda
+  activation_fn: gelu
+  ortho_init: false
+  feature_extractor:
+    name: table_attention_transformer
+    static_hidden_dims: [256, 256]
+    d_model: 64
+    nhead: 4
+    num_layers: 2
+    features_dim: 256
+    dropout: 0.05
+    max_history_len: 128
+  net_arch:
+    pi: [256, 128]
+    vf: [256, 128]
+train:
+  total_timesteps: 2000
+  num_envs: 1
+  vec_env_type: dummy
+  learning_rate: 0.0003
+  n_steps: 128
+  batch_size: 128
+  n_epochs: 4
+  gamma: 0.99
+  gae_lambda: 0.95
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  clip_range: 0.2
+logging:
+  checkpoint_dir: artifacts/checkpoints/ppo_table_attention
+  checkpoint_freq: 1000
