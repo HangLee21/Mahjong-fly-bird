@@ -76,6 +76,7 @@ def main() -> None:
     parser.add_argument("--bc-epochs", type=int, default=8)
     parser.add_argument("--bc-batch-size", type=int, default=256)
     parser.add_argument("--output-dir", default="artifacts/checkpoints/bc_then_ppo")
+    parser.add_argument("--resume", default=None, help="Skip BC and continue PPO from a saved checkpoint.")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -85,32 +86,53 @@ def main() -> None:
 
     from sb3_contrib import MaskablePPO
 
-    model = MaskablePPO(
-        model_cfg.get("policy", "MultiInputPolicy"),
-        env,
-        device=model_cfg.get("device", "auto"),
-        policy_kwargs=build_policy_kwargs(model_cfg),
-        learning_rate=float(train_cfg.get("learning_rate", 3e-4)),
-        n_steps=int(train_cfg.get("n_steps", 128)),
-        batch_size=int(train_cfg.get("batch_size", 256)),
-        n_epochs=int(train_cfg.get("n_epochs", 4)),
-        gamma=float(train_cfg.get("gamma", 0.99)),
-        gae_lambda=float(train_cfg.get("gae_lambda", 0.95)),
-        ent_coef=float(train_cfg.get("ent_coef", 0.0)),
-        vf_coef=float(train_cfg.get("vf_coef", 0.5)),
-        max_grad_norm=float(train_cfg.get("max_grad_norm", 0.5)),
-        clip_range=float(train_cfg.get("clip_range", 0.2)),
-        verbose=1,
-    )
+    if args.resume:
+        model = MaskablePPO.load(
+            args.resume,
+            env=env,
+            device=model_cfg.get("device", "auto"),
+            custom_objects={
+                "learning_rate": float(train_cfg.get("learning_rate", 3e-4)),
+                "clip_range": float(train_cfg.get("clip_range", 0.2)),
+                "n_steps": int(train_cfg.get("n_steps", 128)),
+                "batch_size": int(train_cfg.get("batch_size", 256)),
+                "n_epochs": int(train_cfg.get("n_epochs", 4)),
+                "gamma": float(train_cfg.get("gamma", 0.99)),
+                "gae_lambda": float(train_cfg.get("gae_lambda", 0.95)),
+                "ent_coef": float(train_cfg.get("ent_coef", 0.0)),
+                "vf_coef": float(train_cfg.get("vf_coef", 0.5)),
+                "max_grad_norm": float(train_cfg.get("max_grad_norm", 0.5)),
+            },
+        )
+        model.verbose = 1
+    else:
+        model = MaskablePPO(
+            model_cfg.get("policy", "MultiInputPolicy"),
+            env,
+            device=model_cfg.get("device", "auto"),
+            policy_kwargs=build_policy_kwargs(model_cfg),
+            learning_rate=float(train_cfg.get("learning_rate", 3e-4)),
+            n_steps=int(train_cfg.get("n_steps", 128)),
+            batch_size=int(train_cfg.get("batch_size", 256)),
+            n_epochs=int(train_cfg.get("n_epochs", 4)),
+            gamma=float(train_cfg.get("gamma", 0.99)),
+            gae_lambda=float(train_cfg.get("gae_lambda", 0.95)),
+            ent_coef=float(train_cfg.get("ent_coef", 0.0)),
+            vf_coef=float(train_cfg.get("vf_coef", 0.5)),
+            max_grad_norm=float(train_cfg.get("max_grad_norm", 0.5)),
+            clip_range=float(train_cfg.get("clip_range", 0.2)),
+            verbose=1,
+        )
 
-    static, table, actions = load_traces(Path(args.bc_data))
-    print(f"Loaded {len(actions)} human traces; starting BC.")
-    run_bc(model, static, table, actions, args.bc_epochs, args.bc_batch_size)
+        static, table, actions = load_traces(Path(args.bc_data))
+        print(f"Loaded {len(actions)} human traces; starting BC.")
+        run_bc(model, static, table, actions, args.bc_epochs, args.bc_batch_size)
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    model.save(str(out / "bc_model.zip"))
-    print(f"Saved BC model to {out / 'bc_model.zip'}")
+    if not args.resume:
+        model.save(str(out / "bc_model.zip"))
+        print(f"Saved BC model to {out / 'bc_model.zip'}")
 
     total_timesteps = int(train_cfg.get("total_timesteps", 0))
     if total_timesteps > 0:
