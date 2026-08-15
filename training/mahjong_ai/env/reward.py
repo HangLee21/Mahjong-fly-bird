@@ -36,6 +36,37 @@ def compute_reward(
     return float(reward)
 
 
+def discard_danger_score(state: Any, tile: int, player_id: int) -> float:
+    """Estimate how dangerous discarding `tile` is, from public information.
+
+    Higher means more dangerous (opponents are more likely to be waiting on it).
+    A tile is fully safe when all four copies are visible in public discards or
+    open melds. Middle-number suited tiles are the most dangerous, honors and
+    terminals less so. The player's own hand is intentionally not considered
+    here because we are scoring the tile about to be discarded.
+    """
+
+    visible = 0
+    for seat, discards in enumerate(getattr(state, "discards", [[] for _ in range(4)])):
+        visible += list(discards).count(int(tile))
+    for melds in getattr(state, "melds", [[] for _ in range(4)]):
+        for meld in melds:
+            visible += list(getattr(meld, "tiles", [])).count(int(tile))
+
+    live = max(0, 4 - visible)
+    if live == 0:
+        return 0.0
+    if int(tile) >= 27:
+        base = 0.55
+    elif int(tile) % 9 + 1 in (1, 9):
+        base = 0.4
+    elif int(tile) % 9 + 1 in (2, 8):
+        base = 0.7
+    else:
+        base = 1.0
+    return base * (live / 4.0)
+
+
 def _action_shaping(prev_state: Any, player_id: int, action: int | None, cfg: dict) -> float:
     if action is None:
         return 0.0
@@ -49,6 +80,8 @@ def _action_shaping(prev_state: Any, player_id: int, action: int | None, cfg: di
         hand = list(getattr(prev_state, "hands", [[] for _ in range(4)])[player_id])
         wildcard_enabled = not bool(getattr(prev_state, "xiaoji_disabled", False))
         reward += discard_preference_reward(action, hand, wildcard_enabled, cfg)
+        danger = discard_danger_score(prev_state, action, player_id)
+        reward -= float(cfg.get("discard_danger_penalty", 0.0)) * danger
     if action == ACTION_KONG_CONCEALED:
         reward += float(cfg.get("concealed_kong_bonus", 0.0))
     elif action == ACTION_KONG_EXPOSED:

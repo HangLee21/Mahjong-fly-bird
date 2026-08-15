@@ -1,5 +1,5 @@
 from mahjong_ai.env.actions import ACTION_KONG_ADDED, ACTION_KONG_CONCEALED
-from mahjong_ai.env.reward import compute_reward, discard_preference_score, hand_goal_scores_for_tiles
+from mahjong_ai.env.reward import compute_reward, discard_danger_score, discard_preference_score, hand_goal_scores_for_tiles
 from mahjong_ai.rules.flybird import FlybirdRuleEngine, WILDCARD
 
 
@@ -16,6 +16,22 @@ def test_xiaoji_discard_shaping_penalty():
         action=WILDCARD,
     )
     assert reward == -0.04
+
+
+def test_discard_danger_score_is_safe_when_all_copies_visible():
+    engine = FlybirdRuleEngine()
+    state = engine.reset(seed=19)
+    state.discards = [[5, 5], [5], [5], []]
+    state.melds = [[], [], [], []]
+    assert discard_danger_score(state, 5, 0) == 0.0
+
+
+def test_discard_danger_score_live_middle_tile_is_dangerous():
+    engine = FlybirdRuleEngine()
+    state = engine.reset(seed=19)
+    state.discards = [[], [], [5], []]
+    state.melds = [[], [], [], []]
+    assert discard_danger_score(state, 5, 0) == 0.75
 
 
 def test_concealed_kong_shaping_bonus():
