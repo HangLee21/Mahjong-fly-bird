@@ -116,6 +116,7 @@ def main() -> None:
     parser.add_argument("--resume", default=None, help="Skip BC and continue PPO from a saved checkpoint.")
     parser.add_argument("--bc-aux-steps", type=int, default=0, help="BC gradient steps per rollout during PPO.")
     parser.add_argument("--bc-aux-batch", type=int, default=256)
+    parser.add_argument("--no-bc", action="store_true", help="Skip BC pretraining and train PPO from scratch.")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -163,13 +164,14 @@ def main() -> None:
             verbose=1,
         )
 
-        static, table, actions = load_traces(Path(args.bc_data))
-        print(f"Loaded {len(actions)} human traces; starting BC.")
-        run_bc(model, static, table, actions, args.bc_epochs, args.bc_batch_size)
+        if not args.no_bc:
+            static, table, actions = load_traces(Path(args.bc_data))
+            print(f"Loaded {len(actions)} human traces; starting BC.")
+            run_bc(model, static, table, actions, args.bc_epochs, args.bc_batch_size)
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    if not args.resume:
+    if not args.resume and not args.no_bc:
         model.save(str(out / "bc_model.zip"))
         print(f"Saved BC model to {out / 'bc_model.zip'}")
 
