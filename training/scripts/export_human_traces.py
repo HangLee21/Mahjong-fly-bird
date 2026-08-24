@@ -114,7 +114,16 @@ def reconstruct_before(record: dict[str, Any]) -> dict[str, Any] | None:
     tile = action.get("tile")
     player_index = int(record.get("playerIndex", 0))
 
-    if atype in {"WIN", "KONG_EXPOSED", "KONG_CONCEALED", "KONG_ADDED"}:
+    if atype in {
+        "WIN",
+        "KONG_EXPOSED",
+        "KONG_CONCEALED",
+        "KONG_ADDED",
+        # Backend-only intermediate step where the player picks which tile to
+        # kong; the training env treats kong as a single action, so there is no
+        # matching training action id (109) or state transition.
+        "SELECT_KONG_TILE",
+    }:
         # Terminal or complex kong inversion; not included in the BC set yet.
         return None
 

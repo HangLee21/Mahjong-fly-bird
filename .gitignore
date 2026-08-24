@@ -1,6 +1,7 @@
 training/artifacts/*
 !training/artifacts/human_traces.jsonl
+training/.secrets/
+training/artifacts/pull.log
 __pycache__/
 .pytest_cache/
 *.pyc
-
