@@ -1,0 +1,64 @@
+﻿seed: 2026
+cuda:
+  allow_tf32: true
+  matmul_precision: high
+  cudnn_benchmark: true
+  empty_cache_on_start: true
+  memory_fraction: 0.95
+  num_threads: 8
+env:
+  controlled_player: 0
+  max_steps_per_game: 300
+  obs_include_action_mask: false
+  obs_include_action_features: true
+  opponent_agent: pool
+  allow_chow: true
+observation:
+  version: obs_v3_full_action_scorer
+  include_action_features: true
+action_features:
+  dim: 78
+  identity_features: true
+  effective_tiles: false
+opponent_pool:
+  per_seat_sample: true
+  members:
+    - kind: heuristic
+      weight: 0.70
+    - kind: win_first
+      weight: 0.15
+    - kind: random
+      weight: 0.15
+model:
+  policy: action_value_policy
+  device: cuda
+  activation_fn: gelu
+  ortho_init: false
+  action_value:
+    action_feature_dim: 78
+    state_embedding_dim: 640
+    action_embedding_dim: 192
+    state_hidden_dims: [1024, 768]
+    action_hidden_dims: [256, 256]
+    scorer_hidden_dims: [512, 256]
+    value_hidden_dims: [768, 384]
+    action_chunk_size: 32
+    dropout: 0.02
+train:
+  n_steps: 2048
+  batch_size: 2048
+  learning_rate: 0.00008
+behavior_cloning:
+  dataset_path: artifacts/datasets/v3_full_action_scorer_heuristic_20w.npz
+  num_samples: 200000
+  max_games: 200000
+  progress_interval: 10000
+  batch_size: 2048
+  epochs: 8
+  learning_rate: 0.00008
+  weight_decay: 0.00001
+  entropy_coef: 0.001
+  max_grad_norm: 1.0
+logging:
+  checkpoint_dir: artifacts/checkpoints/v3_full_action_scorer_bc
+

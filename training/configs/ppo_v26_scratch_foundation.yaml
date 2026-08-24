@@ -1,0 +1,102 @@
+seed: 2026
+cuda:
+  allow_tf32: true
+  matmul_precision: high
+  cudnn_benchmark: true
+  empty_cache_on_start: true
+  memory_fraction: 0.95
+  num_threads: 8
+env:
+  controlled_player: 0
+  max_steps_per_game: 300
+  obs_include_action_mask: false
+  opponent_agent: pool
+  allow_chow: true
+opponent_pool:
+  per_seat_sample: true
+  members:
+    - kind: heuristic
+      weight: 0.75
+    - kind: win_first
+      weight: 0.15
+    - kind: random
+      weight: 0.10
+reward:
+  score_scale: 6.0
+  step_penalty: 0.001
+  discard_live_xiaoji_penalty: 0.045
+  discard_dead_xiaoji_penalty: 0.0
+  human_discard_preference_bonus: 0.002
+  isolated_honor_discard_bonus: 0.010
+  discard_connected_suit_over_honor_penalty: 0.012
+  discard_pair_over_honor_penalty: 0.010
+  discard_pair_penalty: 0.004
+  discard_only_pair_penalty: 0.008
+  discard_best_shanten_bonus: 0.002
+  discard_miss_best_shanten_penalty: 0.012
+  discard_break_meld_penalty: 0.014
+  discard_break_taatsu_penalty: 0.006
+  discard_break_good_taatsu_penalty: 0.010
+  discard_shape_score_bonus: 0.0012
+  discard_over_kong_penalty: 0.002
+  discard_over_kong_ready_penalty: 0.004
+  concealed_kong_bonus: 0.004
+  exposed_kong_penalty: 0.010
+  added_kong_penalty: 0.006
+  added_kong_as_concealed: true
+  added_kong_as_concealed_bonus: 0.004
+  added_kong_ready_bonus: 0.003
+  shanten_improvement_bonus: 0.010
+  shanten_regression_penalty: 0.016
+  ready_bonus: 0.016
+  hand_goal_mode: committed
+  hand_goal_improvement_bonus: 0.001
+  hand_goal_regression_penalty: 0.0014
+  hand_goal_switch_penalty: 0.004
+  terminal_win_bonus: 0.016
+  self_draw_bonus: 0.014
+  ron_bonus: 0.005
+  fan_bonus: 0.0018
+  point_bonus: 0.007
+model:
+  policy: MlpPolicy
+  device: cuda
+  activation_fn: gelu
+  ortho_init: false
+  feature_extractor:
+    name: layer_norm_mlp
+    hidden_dims: [1024, 1024, 512]
+    features_dim: 768
+    dropout: 0.02
+  net_arch:
+    pi: [1024, 512, 256]
+    vf: [1024, 512, 256]
+train:
+  total_timesteps: 20000000
+  num_envs: 8
+  vec_env_type: subproc
+  learning_rate: 0.00008
+  n_steps: 4096
+  batch_size: 8192
+  n_epochs: 4
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.12
+  target_kl: 0.025
+  ent_coef: 0.014
+  vf_coef: 0.8
+  max_grad_norm: 0.5
+logging:
+  checkpoint_dir: artifacts/checkpoints/ppo_v26_scratch_foundation
+  checkpoint_freq: 1000000
+early_stop:
+  enabled: true
+  eval_freq: 1000000
+  num_games: 5000
+  opponent: heuristic
+  metric: avg_score
+  mode: max
+  min_delta: 0.01
+  patience: 8
+  min_timesteps: 8000000
+  seed_offset: 100000

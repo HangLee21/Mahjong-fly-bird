@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,8 @@ def play_game(
     env_config["reward"] = train_config.get("reward", {})
     if "observation" in train_config:
         env_config["observation"] = train_config["observation"]
+    if "action_features" in train_config:
+        env_config["action_features"] = train_config["action_features"]
     env_config["opponent_agent"] = opponent
     env_config["max_steps_per_game"] = max_steps
     if opponent_pool is not None:
@@ -66,6 +69,7 @@ def play_game(
     records: list[dict[str, Any]] = []
     terminated = truncated = False
     step = 0
+    draw_into_decision = "起手/首个决策"
     while not (terminated or truncated):
         assert env.state is not None
         before = _snapshot(env, info)
@@ -81,10 +85,13 @@ def play_game(
                 "action_text": action_text(action),
                 "fallback_used": bool(result["fallback_used"]),
                 "reward": float(reward),
+                "draw_into_decision": draw_into_decision,
                 "before": before,
                 "after": after,
+                "transition": _transition_summary(before, after, action),
             }
         )
+        draw_into_decision = records[-1]["transition"]["added_text"]
         obs, info = next_obs, next_info
         step += 1
         if step >= max_steps:
@@ -127,12 +134,24 @@ def _snapshot(env: MahjongSingleAgentEnv, info: dict[str, Any]) -> dict[str, Any
         "hand": hand,
         "hand_text": tiles_text(hand),
         "melds": [meld_text(meld) for meld in env.state.melds[player]],
+        "all_melds": [[meld_text(meld) for meld in melds] for melds in env.state.melds],
         "discards": [tiles_text(d) for d in env.state.discards],
+        "discard_counts": [len(d) for d in env.state.discards],
         "kong_pool": tiles_text(env.state.kong_pool),
+        "kong_pool_raw": list(env.state.kong_pool),
         "last_discard": tile_text(env.state.last_discard),
         "last_discard_player": env.state.last_discard_player,
         "wall_count": len(env.state.wall),
         "scores": list(env.state.scores),
+        "dealer": int(env.state.dealer),
+        "current_player": int(env.state.current_player),
+        "phase": env.state.phase,
+        "pending": None if env.state.pending is None else dict(env.state.pending.__dict__),
+        "last_action": env.state.last_action,
+        "last_draw_from_kong": bool(env.state.last_draw_from_kong),
+        "last_kong_player": env.state.last_kong_player,
+        "last_kong_tile": tile_text(env.state.last_kong_tile),
+        "public_events_tail": [_event_text(event) for event in getattr(env.state, "public_events", [])[-8:]],
         "legal_actions": list(info["legal_actions"]),
         "legal_text": [action_text(a) for a in info["legal_actions"]],
         "shanten": best_shanten(
@@ -143,6 +162,22 @@ def _snapshot(env: MahjongSingleAgentEnv, info: dict[str, Any]) -> dict[str, Any
         "goal": GOAL_NAMES[target_index],
         "goal_scores": {GOAL_NAMES[i]: round(float(score), 3) for i, score in enumerate(goal_scores)},
         "xiaoji_disabled": bool(env.state.xiaoji_disabled),
+    }
+
+
+def _transition_summary(before: dict[str, Any], after: dict[str, Any], action: int) -> dict[str, Any]:
+    before_counter = Counter(before.get("hand", []))
+    after_counter = Counter(after.get("hand", []))
+    removed = sorted((before_counter - after_counter).elements())
+    added = sorted((after_counter - before_counter).elements())
+    discarded = [action] if is_discard(action) else []
+    return {
+        "added": added,
+        "removed": removed,
+        "discarded": discarded,
+        "added_text": tiles_text(added),
+        "removed_text": tiles_text(removed),
+        "discarded_text": tiles_text(discarded),
     }
 
 
@@ -182,8 +217,76 @@ def render_text(game: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_text(game: dict[str, Any]) -> str:
+    lines: list[str] = []
+    lines.append(f"模型: {game['model']}")
+    lines.append(f"seed: {game['seed']}  opponent: {game['opponent']}  deterministic: {game['deterministic']}")
+    lines.append(f"reward_config_loaded: {game.get('reward_config_loaded', False)}")
+    lines.append("")
+    for rec in game["records"]:
+        before = rec["before"]
+        after = rec["after"]
+        transition = rec.get("transition", {})
+        lines.append(f"Step {rec['step']:02d}")
+        lines.append(f"  手牌: {before['hand_text']}")
+        lines.append(f"  本次摸入/进入决策新增: {rec.get('draw_into_decision', '-')}")
+        if before["melds"]:
+            lines.append(f"  副露: {' | '.join(before['melds'])}")
+        lines.append(
+            f"  分数: {before.get('scores', '-')}  庄家: P{before.get('dealer')}  "
+            f"当前: P{before.get('current_player')}  阶段: {before.get('phase', '-')}"
+        )
+        lines.append(
+            f"  目标: {before['goal']}  向听: {before['shanten']}  "
+            f"杠牌: {before['kong_pool']}  余牌: {before['wall_count']}"
+        )
+        lines.append(
+            f"  小鸡失效: {before.get('xiaoji_disabled', False)}  "
+            f"上次杠: P{before.get('last_kong_player')} {before.get('last_kong_tile', '-')}  "
+            f"杠后摸: {before.get('last_draw_from_kong', False)}"
+        )
+        lines.append(f"  目标分: {_goal_scores_text(before['goal_scores'])}")
+        lines.append(f"  上张: P{before['last_discard_player']} {before['last_discard']}")
+        if before.get("pending"):
+            lines.append(f"  待响应: {before['pending']}")
+        lines.append(f"  公开弃牌: {_seat_lines(before.get('discards', []))}")
+        lines.append(f"  全员副露: {_seat_lines([' | '.join(melds) if melds else '-' for melds in before.get('all_melds', [])])}")
+        if before.get("public_events_tail"):
+            lines.append(f"  最近公开事件: {'; '.join(before['public_events_tail'])}")
+        lines.append(f"  合法: {', '.join(before['legal_text'])}")
+        lines.append(
+            f"  选择: {rec['action_text']}  reward={rec['reward']:.4f}"
+            + ("  fallback" if rec["fallback_used"] else "")
+        )
+        lines.append(
+            f"  本步手牌变化: 减少 {transition.get('removed_text', '-')}  "
+            f"新增 {transition.get('added_text', '-')}"
+        )
+        lines.append(f"  后手: {after['hand_text']}")
+        lines.append("")
+    lines.append("Final")
+    lines.append(
+        f"  winner={game['winner']} winners={game['winners']} draw={game['draw']} "
+        f"win_type={game['win_type']} payer={game['payer']}"
+    )
+    lines.append(f"  win_points={game['win_points']} win_names={game['win_names']}")
+    lines.append(f"  scores={game['scores']}")
+    return "\n".join(lines)
+
+
 def _goal_scores_text(scores: dict[str, float]) -> str:
     return ", ".join(f"{name}:{value:.2f}" for name, value in scores.items())
+
+
+def _seat_lines(items: list[Any]) -> str:
+    return " | ".join(f"P{i}:{item}" for i, item in enumerate(items))
+
+
+def _event_text(event: dict[str, Any]) -> str:
+    tile = tile_text(event.get("tile"))
+    target = event.get("target")
+    target_text = "-" if target is None else f"P{target}"
+    return f"{event.get('step')}:{event.get('type')} P{event.get('player')}->{target_text} {tile}"
 
 
 def tile_text(tile: int | None) -> str:

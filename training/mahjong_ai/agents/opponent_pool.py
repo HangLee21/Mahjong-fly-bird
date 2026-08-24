@@ -28,6 +28,8 @@ class OpponentPool:
         self.rng = random.Random(seed)
         self.members = self._parse_members(self.config.get("members"))
         self.per_seat_sample = bool(self.config.get("per_seat_sample", True))
+        self.cache_model_agents = bool(self.config.get("cache_model_agents", True))
+        self._model_agent_cache: dict[tuple[str, str, bool], ModelAgent] = {}
 
     def sample_table(self, controlled_player: int = 0) -> list[BaseAgent | None]:
         if self.per_seat_sample:
@@ -66,6 +68,16 @@ class OpponentPool:
         if kind == "model":
             if not spec.model_path:
                 raise ValueError("model opponent requires model_path")
+            if self.cache_model_agents:
+                cache_key = (spec.model_path, spec.device, spec.deterministic)
+                if cache_key not in self._model_agent_cache:
+                    self._model_agent_cache[cache_key] = ModelAgent(
+                        spec.model_path,
+                        device=spec.device,
+                        deterministic=spec.deterministic,
+                        fallback=HeuristicAgent(seed=seed),
+                    )
+                return self._model_agent_cache[cache_key]
             return ModelAgent(
                 spec.model_path,
                 device=spec.device,

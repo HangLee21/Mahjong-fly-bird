@@ -1,0 +1,37 @@
+seed: 2026
+env:
+  controlled_player: 0
+  max_steps_per_game: 80
+  obs_include_action_mask: false
+  opponent_agent: heuristic
+  allow_chow: true
+model:
+  policy: MlpPolicy
+  device: auto
+  activation_fn: gelu
+  ortho_init: false
+  feature_extractor:
+    name: layer_norm_mlp
+    hidden_dims: [64]
+    features_dim: 64
+    dropout: 0.0
+  net_arch:
+    pi: [64]
+    vf: [64]
+train:
+  n_steps: 64
+  batch_size: 32
+  learning_rate: 0.0003
+behavior_cloning:
+  dataset_path: artifacts/datasets/v25_smoke_bc.npz
+  num_samples: 64
+  max_games: 20
+  progress_interval: 16
+  batch_size: 16
+  epochs: 1
+  learning_rate: 0.0003
+  weight_decay: 0.0
+  entropy_coef: 0.0
+  max_grad_norm: 1.0
+logging:
+  checkpoint_dir: artifacts/checkpoints/v25_bc_smoke

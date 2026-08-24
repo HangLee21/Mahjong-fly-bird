@@ -13,12 +13,13 @@ from mahjong_ai.env.actions import (
     ACTION_KONG_EXPOSED,
     ACTION_PASS,
     ACTION_PONG,
-    ACTION_WIN,
     ACTION_SPACE_SIZE,
+    ACTION_WIN,
     N_TILE_TYPES,
     build_action_mask,
     is_discard,
 )
+from mahjong_ai.env.reward import hand_goal_scores_for_tiles
 from mahjong_ai.rules.adapter import RuleAdapter
 from mahjong_ai.rules.flybird import HONORS, TERMINALS, WILDCARD
 from mahjong_ai.rules.shanten import best_shanten, effective_tile_count, fast_hand_value
@@ -38,6 +39,12 @@ HISTORY_EVENT_DIM = len(HISTORY_EVENT_TYPES) + 4 + 4 + (N_TILE_TYPES + 1) + 4
 SEAT_DIM = N_TILE_TYPES + N_TILE_TYPES + 1 + 1 + 1 + 4 + 1
 ACTION_FEATURE_DIM = 18
 ACTION_FEATURE_FULL_DIM = 78
+
+# Per-tile hand sequence for the attention hand encoder. Each token is a 35-dim
+# one-hot (34 tiles + 1 pad) plus count / xiaoji / honor scalar features.
+HAND_MAX_TILES = 14
+HAND_TOKEN_DIM = (N_TILE_TYPES + 1) + 3
+HAND_GOAL_DIM = 4  # standard / seven-pairs / flush / triplet goal scores
 
 
 def _count_vec(tiles: list[int], denom: float = 4.0) -> np.ndarray:
@@ -63,6 +70,8 @@ def get_observation_dim(config: dict | None = None) -> int:
         + (N_TILE_TYPES + 1)
         + 3
     )
+    if cfg.get("obs_include_hand_goal", False):
+        base += HAND_GOAL_DIM
     dim = base + (ACTION_SPACE_SIZE if include_mask else 0)
     if include_action_features:
         dim += ACTION_SPACE_SIZE * get_action_feature_dim(cfg)
@@ -82,6 +91,12 @@ def include_table_observation(config: dict | None = None) -> bool:
     return bool(obs_cfg.get("include_table", cfg.get("obs_include_table", False)))
 
 
+def include_hand_observation(config: dict | None = None) -> bool:
+    cfg = config or {}
+    obs_cfg = cfg.get("observation", {})
+    return bool(obs_cfg.get("include_hand", cfg.get("obs_include_hand", False)))
+
+
 def build_observation(
     rule_adapter: RuleAdapter,
     state: Any,
@@ -91,12 +106,44 @@ def build_observation(
     if is_history_observation(config):
         return build_history_observation(rule_adapter, state, player_id, config)
     static = build_static_observation(rule_adapter, state, player_id, config)
-    if include_table_observation(config):
-        return {
-            "static": static.astype(np.float32),
-            "table": build_table_tokens(rule_adapter, state, player_id),
-        }
+    include_hand = include_hand_observation(config)
+    if include_table_observation(config) or include_hand:
+        result: dict[str, np.ndarray] = {"static": static.astype(np.float32)}
+        if include_table_observation(config):
+            result["table"] = build_table_tokens(rule_adapter, state, player_id)
+        if include_hand:
+            result["hand"], result["hand_mask"] = build_hand_tokens(rule_adapter, state, player_id)
+        return result
     return static
+
+
+def build_hand_tokens(rule_adapter: RuleAdapter, state: Any, player_id: int) -> tuple[np.ndarray, np.ndarray]:
+    """Encode the controlled player's hand as a fixed-length per-tile sequence.
+
+    Attention over these tokens lets the network see meld/taatsu/pair structure
+    (e.g. 7-8-9 run vs scattered tiles) that a 34-dim count vector cannot. Padded
+    positions use tile id ``N_TILE_TYPES`` and are masked out.
+    """
+
+    hand = list(getattr(state, "hands", [[] for _ in range(4)])[player_id])
+    return encode_hand_tokens(hand)
+
+
+def encode_hand_tokens(hand: list[int]) -> tuple[np.ndarray, np.ndarray]:
+    """Pure per-tile encoding of a hand into (tokens, mask)."""
+    tokens = np.zeros((HAND_MAX_TILES, HAND_TOKEN_DIM), dtype=np.float32)
+    mask = np.zeros((HAND_MAX_TILES,), dtype=np.float32)
+    counts = {}
+    for tile in hand:
+        counts[int(tile)] = counts.get(int(tile), 0) + 1
+    for i, tile in enumerate(hand[:HAND_MAX_TILES]):
+        tile = int(tile)
+        tokens[i, tile] = 1.0
+        tokens[i, N_TILE_TYPES + 0] = min(1.0, counts.get(tile, 1) / 4.0)
+        tokens[i, N_TILE_TYPES + 1] = 1.0 if tile == WILDCARD else 0.0
+        tokens[i, N_TILE_TYPES + 2] = 1.0 if tile in HONORS else 0.0
+        mask[i] = 1.0
+    return tokens.astype(np.float32), mask.astype(np.float32)
 
 
 def build_table_tokens(rule_adapter: RuleAdapter, state: Any, player_id: int) -> np.ndarray:
@@ -171,6 +218,19 @@ def build_static_observation(
         dtype=np.float32,
     )
 
+    hand_goal = None
+    if cfg.get("obs_include_hand_goal", False):
+        self_melds = list(public["melds"][player_id])
+        hand_goal = np.asarray(
+            hand_goal_scores_for_tiles(
+                list(private["hand"]),
+                extra_tiles=[t for m in self_melds for t in m.tiles],
+                open_melds=len(self_melds),
+                xiaoji_disabled=bool(public["xiaoji_disabled"]),
+            ),
+            dtype=np.float32,
+        )
+
     parts = [
         hand_counts,
         self_meld_counts,
@@ -183,6 +243,8 @@ def build_static_observation(
         last,
         round_info,
     ]
+    if hand_goal is not None:
+        parts.append(hand_goal)
     if cfg.get("obs_include_action_mask", False):
         parts.append(build_action_mask(legal_actions).astype(np.float32))
     if _include_action_features(cfg):
@@ -217,6 +279,14 @@ def build_action_features(
     player_id: int,
     config: dict | None = None,
 ) -> np.ndarray:
+    """Build per-action tile-efficiency features for every action id.
+
+    Rows for illegal actions stay zero. Legal action rows contain action type
+    flags plus simulated after-action hand quality. This gives the policy a
+    direct comparison table instead of forcing it to infer action consequences
+    from the raw hand alone.
+    """
+
     cfg = config or {}
     action_cfg = cfg.get("action_features", {})
     use_effective_tiles = bool(action_cfg.get("effective_tiles", True))
@@ -253,6 +323,8 @@ def build_action_features(
         row[16] = 1.0 if is_discard(action) and action in TERMINALS else 0.0
 
         if action == ACTION_PASS:
+            # Passing may advance to a hidden draw after all responders pass.
+            # Do not simulate that draw here, or observation would leak wall order.
             after_hand = list(hand)
             after_open = open_melds
             after_wildcard_enabled = wildcard_enabled
@@ -316,6 +388,7 @@ def _encode_action_type(row: np.ndarray, action: int) -> None:
 
 
 def _encode_action_identity(row: np.ndarray, action: int, pending_tile: int | None, hand: list[int]) -> None:
+    # 18-25: action subtype detail.
     if action == ACTION_CHOW_LEFT:
         row[18] = 1.0
     elif action == ACTION_CHOW_MIDDLE:
@@ -336,7 +409,11 @@ def _encode_action_identity(row: np.ndarray, action: int, pending_tile: int | No
     tile = _action_tile(action, pending_tile)
     if tile is None or not 0 <= tile < N_TILE_TYPES:
         return
+
+    # 26-59: explicit tile identity. This is essential for a shared action scorer.
     row[26 + tile] = 1.0
+
+    # 60-63: suit identity, 64-72: rank identity.
     if tile < 9:
         row[60] = 1.0
         row[64 + tile] = 1.0
@@ -425,6 +502,8 @@ def build_history_observation(
     }
     if include_table_observation(config):
         result["table"] = build_table_tokens(rule_adapter, state, player_id)
+    if include_hand_observation(config):
+        result["hand"], result["hand_mask"] = build_hand_tokens(rule_adapter, state, player_id)
     return result
 
 

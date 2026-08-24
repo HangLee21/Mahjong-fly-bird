@@ -5,7 +5,7 @@ cuda:
   cudnn_benchmark: true
   empty_cache_on_start: true
   memory_fraction: 0.95
-  num_threads: 16
+  num_threads: 4
 env:
   controlled_player: 0
   max_steps_per_game: 300
@@ -17,22 +17,22 @@ opponent_pool:
   cache_model_agents: true
   members:
     - kind: heuristic
-      weight: 0.35
+      weight: 0.30
     - kind: win_first
-      weight: 0.20
+      weight: 0.15
     - kind: random
-      weight: 0.15
+      weight: 0.10
     - kind: model
-      name: v1_1000w
-      weight: 0.15
+      name: v1_1000w_cuda
+      weight: 0.20
       model_path: artifacts/checkpoints/ppo_v1_committed_scratch/periodic/model_10000000_steps.zip
-      device: cpu
+      device: cuda
       deterministic: false
     - kind: model
-      name: v2_1500w
-      weight: 0.15
+      name: v2_1500w_cuda
+      weight: 0.25
       model_path: artifacts/checkpoints/ppo_v2_committed_scratch/periodic/model_15000000_steps.zip
-      device: cpu
+      device: cuda
       deterministic: false
 reward:
   score_scale: 10.0
@@ -72,13 +72,13 @@ model:
     pi: [1024, 512, 256]
     vf: [1024, 512, 256]
 train:
-  total_timesteps: 15000000
-  num_envs: 16
+  total_timesteps: 5000000
+  num_envs: 4
   vec_env_type: subproc
   learning_rate: 0.00008
-  n_steps: 4096
-  batch_size: 8192
-  n_epochs: 5
+  n_steps: 8192
+  batch_size: 4096
+  n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.15
@@ -87,7 +87,7 @@ train:
   vf_coef: 0.5
   max_grad_norm: 0.5
 logging:
-  checkpoint_dir: artifacts/checkpoints/ppo_v2_human_scratch_with_v1_v2_pool
+  checkpoint_dir: artifacts/checkpoints/ppo_v2_human_finetune_high_model_gpu_opponents
   checkpoint_freq: 500000
 early_stop:
   enabled: true
@@ -98,5 +98,5 @@ early_stop:
   mode: max
   min_delta: 0.01
   patience: 8
-  min_timesteps: 4000000
+  min_timesteps: 1000000
   seed_offset: 100000

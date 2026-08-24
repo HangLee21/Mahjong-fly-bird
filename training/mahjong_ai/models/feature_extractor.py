@@ -218,3 +218,189 @@ class TableAttentionTransformerExtractor(BaseFeaturesExtractor):
             denom = mask.sum(dim=1).clamp_min(1.0)
             parts.append(masked.sum(dim=1) / denom)
         return self.fusion(th.cat(parts, dim=1))
+
+
+class HybridHistoryTransformerV2Extractor(BaseFeaturesExtractor):
+    """Encode static state and ordered public history with masked CLS attention.
+
+    This variant is intended for longer overnight V3 runs. Compared with the
+    first history extractor it gives the Transformer an explicit sequence
+    summary token and prevents padded history rows from participating in
+    attention.
+    """
+
+    def __init__(
+        self,
+        observation_space: Any,
+        features_dim: int = 896,
+        static_hidden_dims: list[int] | tuple[int, ...] = (768, 512),
+        d_model: int = 192,
+        nhead: int = 6,
+        num_layers: int = 3,
+        dropout: float = 0.04,
+        max_history_len: int = 128,
+    ):
+        super().__init__(observation_space, features_dim)
+        static_dim = int(observation_space.spaces["static"].shape[0])
+        event_dim = int(observation_space.spaces["history"].shape[-1])
+        history_len = int(observation_space.spaces["history"].shape[0])
+        self.history_len = min(history_len, int(max_history_len))
+        self.d_model = int(d_model)
+
+        static_layers: list[nn.Module] = []
+        prev_dim = static_dim
+        for hidden_dim in static_hidden_dims:
+            static_layers.append(nn.Linear(prev_dim, int(hidden_dim)))
+            static_layers.append(nn.LayerNorm(int(hidden_dim)))
+            static_layers.append(nn.GELU())
+            if dropout > 0:
+                static_layers.append(nn.Dropout(float(dropout)))
+            prev_dim = int(hidden_dim)
+        static_layers.append(nn.Linear(prev_dim, self.d_model))
+        static_layers.append(nn.LayerNorm(self.d_model))
+        static_layers.append(nn.GELU())
+        self.static_net = nn.Sequential(*static_layers)
+
+        self.event_proj = nn.Sequential(
+            nn.Linear(event_dim, self.d_model),
+            nn.LayerNorm(self.d_model),
+            nn.GELU(),
+        )
+        self.cls_token = nn.Parameter(th.zeros(1, 1, self.d_model))
+        self.pos_embedding = nn.Parameter(th.zeros(1, history_len + 1, self.d_model))
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=self.d_model,
+            nhead=int(nhead),
+            dim_feedforward=self.d_model * 4,
+            dropout=float(dropout),
+            activation="gelu",
+            batch_first=True,
+            norm_first=False,
+        )
+        self.history_encoder = nn.TransformerEncoder(encoder_layer, num_layers=int(num_layers))
+        self.fusion = nn.Sequential(
+            nn.Linear(self.d_model * 2, features_dim),
+            nn.LayerNorm(features_dim),
+            nn.GELU(),
+            nn.Dropout(float(dropout)) if dropout > 0 else nn.Identity(),
+        )
+
+    def forward(self, observations: dict[str, th.Tensor]) -> th.Tensor:
+        static = self.static_net(observations["static"].float())
+        history = observations["history"].float()
+        mask = observations["history_mask"].float()
+        batch_size = history.shape[0]
+
+        event_features = self.event_proj(history)
+        cls = self.cls_token.expand(batch_size, -1, -1)
+        tokens = th.cat([cls, event_features], dim=1)
+        tokens = tokens + self.pos_embedding[:, : tokens.shape[1], :]
+
+        cls_padding = th.zeros((batch_size, 1), dtype=th.bool, device=history.device)
+        history_padding = mask <= 0.0
+        padding_mask = th.cat([cls_padding, history_padding], dim=1)
+        encoded = self.history_encoder(tokens, src_key_padding_mask=padding_mask)
+        history_features = encoded[:, 0, :]
+        return self.fusion(th.cat([static, history_features], dim=1))
+
+
+class MahjongAttentionExtractor(BaseFeaturesExtractor):
+    """Attention over the hand tiles + table seats, fused with the static MLP.
+
+    Unlike the count-vector encoders, this runs a Transformer over the hand's
+    per-tile tokens so the network can perceive meld/taatsu/pair structure, and a
+    Transformer over the four seat tokens for board/opponent context. It expects
+    a dict observation with ``static``, ``hand``, ``hand_mask`` and ``table``.
+    """
+
+    def __init__(
+        self,
+        observation_space: Any,
+        features_dim: int = 512,
+        static_hidden_dims: list[int] | tuple[int, ...] = (512, 512),
+        d_model: int = 128,
+        nhead: int = 4,
+        num_layers: int = 2,
+        dropout: float = 0.05,
+        max_hand_tiles: int = 14,
+    ):
+        super().__init__(observation_space, features_dim)
+        self.d_model = int(d_model)
+        static_dim = int(observation_space.spaces["static"].shape[0])
+        hand_dim = int(observation_space.spaces["hand"].shape[-1])
+        table_dim = int(observation_space.spaces["table"].shape[-1])
+        self.hand_len = min(int(observation_space.spaces["hand"].shape[0]), int(max_hand_tiles))
+        n_seats = int(observation_space.spaces["table"].shape[0])
+
+        static_layers: list[nn.Module] = []
+        prev = static_dim
+        for hidden in static_hidden_dims:
+            static_layers.append(nn.Linear(prev, int(hidden)))
+            static_layers.append(nn.LayerNorm(int(hidden)))
+            static_layers.append(nn.GELU())
+            if dropout > 0:
+                static_layers.append(nn.Dropout(float(dropout)))
+            prev = int(hidden)
+        static_layers.append(nn.Linear(prev, self.d_model))
+        static_layers.append(nn.LayerNorm(self.d_model))
+        static_layers.append(nn.GELU())
+        self.static_net = nn.Sequential(*static_layers)
+
+        self.hand_proj = nn.Sequential(
+            nn.Linear(hand_dim, self.d_model),
+            nn.LayerNorm(self.d_model),
+            nn.GELU(),
+        )
+        self.hand_pos = nn.Parameter(th.zeros(1, self.hand_len, self.d_model))
+        hand_layer = nn.TransformerEncoderLayer(
+            d_model=self.d_model,
+            nhead=int(nhead),
+            dim_feedforward=self.d_model * 4,
+            dropout=float(dropout),
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.hand_encoder = nn.TransformerEncoder(hand_layer, num_layers=int(num_layers))
+
+        self.table_proj = nn.Sequential(
+            nn.Linear(table_dim, self.d_model),
+            nn.LayerNorm(self.d_model),
+            nn.GELU(),
+        )
+        self.seat_pos = nn.Parameter(th.zeros(1, n_seats, self.d_model))
+        table_layer = nn.TransformerEncoderLayer(
+            d_model=self.d_model,
+            nhead=int(nhead),
+            dim_feedforward=self.d_model * 4,
+            dropout=float(dropout),
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.table_encoder = nn.TransformerEncoder(table_layer, num_layers=int(num_layers))
+
+        self.fusion = nn.Sequential(
+            nn.Linear(self.d_model * 3, features_dim),
+            nn.LayerNorm(features_dim),
+            nn.GELU(),
+            nn.Dropout(float(dropout)) if dropout > 0 else nn.Identity(),
+        )
+
+    def forward(self, observations: dict[str, th.Tensor]) -> th.Tensor:
+        static = self.static_net(observations["static"].float())
+
+        hand = observations["hand"].float()
+        hand_mask = observations["hand_mask"].float()
+        hand_tokens = self.hand_proj(hand) + self.hand_pos[:, : hand.shape[1], :]
+        hand_pad = hand_mask <= 0.5
+        hand_enc = self.hand_encoder(hand_tokens, src_key_padding_mask=hand_pad)
+        denom = hand_mask.sum(dim=1).clamp_min(1.0).unsqueeze(-1)
+        hand_feat = (hand_enc * hand_mask.unsqueeze(-1)).sum(dim=1) / denom
+
+        table = observations["table"].float()
+        table_tokens = self.table_proj(table) + self.seat_pos[:, : table.shape[1], :]
+        table_enc = self.table_encoder(table_tokens)
+        table_feat = table_enc.mean(dim=1)
+
+        return self.fusion(th.cat([static, hand_feat, table_feat], dim=1))

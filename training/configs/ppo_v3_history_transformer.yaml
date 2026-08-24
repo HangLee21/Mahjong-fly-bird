@@ -17,6 +17,7 @@ env:
   allow_chow: true
 opponent_pool:
   per_seat_sample: true
+  cache_model_agents: true
   members:
     - kind: heuristic
       weight: 0.30

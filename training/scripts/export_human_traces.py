@@ -26,6 +26,9 @@ from typing import Any
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from mahjong_ai.env.observation import HAND_MAX_TILES, HAND_TOKEN_DIM, encode_hand_tokens  # noqa: E402
+
 
 N_TILE_TYPES = 34
 SEAT_DIM = N_TILE_TYPES + N_TILE_TYPES + 1 + 1 + 1 + 4 + 1
@@ -205,6 +208,8 @@ def reconstruct_before(record: dict[str, Any]) -> dict[str, Any] | None:
     if observation.shape != (OBS_DIM,):
         raise ValueError(f"observation shape {observation.shape} != ({OBS_DIM},)")
 
+    hand_tokens, hand_mask = encode_hand_tokens(hand_before)
+
     return {
         "observation": observation,
         "table": table_tokens(
@@ -219,6 +224,8 @@ def reconstruct_before(record: dict[str, Any]) -> dict[str, Any] | None:
                 for i in range(4)
             ],
         ),
+        "hand": hand_tokens.round(6).tolist(),
+        "hand_mask": hand_mask.tolist(),
         "legal_actions": [int(a) for a in (record.get("legalActions") or [])],
         "action": int(action.get("actionId", -1)),
         "meta": {

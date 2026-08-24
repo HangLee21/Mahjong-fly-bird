@@ -16,10 +16,13 @@ from mahjong_ai.agents.opponent_pool import OpponentPool
 from mahjong_ai.agents.random_agent import RandomAgent
 from mahjong_ai.env.actions import ACTION_PASS, ACTION_SPACE_SIZE, build_action_mask
 from mahjong_ai.env.observation import (
+    HAND_MAX_TILES,
+    HAND_TOKEN_DIM,
     HISTORY_EVENT_DIM,
     SEAT_DIM,
     build_observation,
     get_observation_dim,
+    include_hand_observation,
     include_table_observation,
     is_history_observation,
 )
@@ -45,7 +48,8 @@ class MahjongSingleAgentEnv(gym.Env if gym else object):
         self.state: Any | None = None
         self._last_obs: Any | None = None
         include_table = include_table_observation(self.config)
-        if is_history_observation(self.config) or include_table:
+        include_hand = include_hand_observation(self.config)
+        if is_history_observation(self.config) or include_table or include_hand:
             history_len = int(self.config.get("observation", {}).get("history_len", self.config.get("history_len", 128)))
             spaces_dict = {
                 "static": spaces.Box(
@@ -62,6 +66,14 @@ class MahjongSingleAgentEnv(gym.Env if gym else object):
                     shape=(4, SEAT_DIM),
                     dtype=np.float32,
                 )
+            if include_hand:
+                spaces_dict["hand"] = spaces.Box(
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=(HAND_MAX_TILES, HAND_TOKEN_DIM),
+                    dtype=np.float32,
+                )
+                spaces_dict["hand_mask"] = spaces.Box(low=0.0, high=1.0, shape=(HAND_MAX_TILES,), dtype=np.float32)
             if is_history_observation(self.config):
                 spaces_dict["history"] = spaces.Box(
                     low=0.0,

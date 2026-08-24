@@ -1,8 +1,5 @@
-SELECT
-  "actionSource",
-  count(*) AS steps,
-  count(DISTINCT "gameId") AS games,
-  count(DISTINCT "playerIndex") AS seats
-FROM "GameStep"
-GROUP BY "actionSource"
-ORDER BY steps DESC;
+SELECT "status", jsonb_pretty("resultJson") AS result, jsonb_pretty("finalScoreJson") AS final_scores
+FROM "Game"
+WHERE status = 'FINISHED'
+ORDER BY "finishedAt" DESC
+LIMIT 1;

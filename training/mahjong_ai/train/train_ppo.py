@@ -10,9 +10,12 @@ import yaml
 from mahjong_ai.env.gym_env import MahjongSingleAgentEnv
 from mahjong_ai.models.feature_extractor import (
     HybridHistoryTransformerExtractor,
+    HybridHistoryTransformerV2Extractor,
     LayerNormMLPExtractor,
+    MahjongAttentionExtractor,
     TableAttentionTransformerExtractor,
 )
+from mahjong_ai.models.action_value_policy import MaskableActionValuePolicy
 from mahjong_ai.train.callbacks import EvalEarlyStopCallback
 from mahjong_ai.utils.torch_runtime import configure_torch_runtime
 
@@ -24,6 +27,22 @@ def load_config(path: str) -> dict:
 
 def build_policy_kwargs(model_cfg: dict) -> dict:
     policy_kwargs: dict = {}
+    policy_name = str(model_cfg.get("policy", "MlpPolicy")).lower()
+    if policy_name in {"action_value_policy", "maskable_action_value_policy"}:
+        av_cfg = model_cfg.get("action_value", {})
+        return {
+            "action_feature_dim": int(av_cfg.get("action_feature_dim", 18)),
+            "state_embedding_dim": int(av_cfg.get("state_embedding_dim", 512)),
+            "action_embedding_dim": int(av_cfg.get("action_embedding_dim", 192)),
+            "state_hidden_dims": list(av_cfg.get("state_hidden_dims", [1024, 768])),
+            "action_hidden_dims": list(av_cfg.get("action_hidden_dims", [256, 256])),
+            "scorer_hidden_dims": list(av_cfg.get("scorer_hidden_dims", [512, 256])),
+            "value_hidden_dims": list(av_cfg.get("value_hidden_dims", [768, 384])),
+            "action_chunk_size": int(av_cfg.get("action_chunk_size", 32)),
+            "dropout": float(av_cfg.get("dropout", 0.02)),
+            "activation_fn": model_cfg.get("activation_fn", "gelu"),
+            "ortho_init": bool(model_cfg.get("ortho_init", False)),
+        }
     net_arch = model_cfg.get("net_arch")
     if isinstance(net_arch, dict):
         policy_kwargs["net_arch"] = {
@@ -53,8 +72,13 @@ def build_policy_kwargs(model_cfg: dict) -> dict:
     extractor_cfg = model_cfg.get("feature_extractor", {})
     if extractor_cfg:
         name = extractor_cfg.get("name", "layer_norm_mlp")
-        if name == "hybrid_history_transformer":
-            policy_kwargs["features_extractor_class"] = HybridHistoryTransformerExtractor
+        if name in {"hybrid_history_transformer", "hybrid_history_transformer_v2"}:
+            extractor_class = (
+                HybridHistoryTransformerV2Extractor
+                if name == "hybrid_history_transformer_v2"
+                else HybridHistoryTransformerExtractor
+            )
+            policy_kwargs["features_extractor_class"] = extractor_class
             policy_kwargs["features_extractor_kwargs"] = {
                 "features_dim": int(extractor_cfg.get("features_dim", 768)),
                 "static_hidden_dims": list(extractor_cfg.get("static_hidden_dims", [512, 512])),
@@ -77,6 +101,18 @@ def build_policy_kwargs(model_cfg: dict) -> dict:
                 "max_history_len": int(extractor_cfg.get("max_history_len", 128)),
             }
             return policy_kwargs
+        if name == "mahjong_attention":
+            policy_kwargs["features_extractor_class"] = MahjongAttentionExtractor
+            policy_kwargs["features_extractor_kwargs"] = {
+                "features_dim": int(extractor_cfg.get("features_dim", 512)),
+                "static_hidden_dims": list(extractor_cfg.get("static_hidden_dims", [512, 512])),
+                "d_model": int(extractor_cfg.get("d_model", 128)),
+                "nhead": int(extractor_cfg.get("nhead", 4)),
+                "num_layers": int(extractor_cfg.get("num_layers", 2)),
+                "dropout": float(extractor_cfg.get("dropout", 0.05)),
+                "max_hand_tiles": int(extractor_cfg.get("max_hand_tiles", 14)),
+            }
+            return policy_kwargs
         if name != "layer_norm_mlp":
             raise ValueError(f"unsupported feature extractor: {name}")
         policy_kwargs["features_extractor_class"] = LayerNormMLPExtractor
@@ -86,6 +122,14 @@ def build_policy_kwargs(model_cfg: dict) -> dict:
             "dropout": float(extractor_cfg.get("dropout", 0.0)),
         }
     return policy_kwargs
+
+
+def resolve_policy(model_cfg: dict):
+    policy = model_cfg.get("policy", "MlpPolicy")
+    policy_name = str(policy).lower()
+    if policy_name in {"action_value_policy", "maskable_action_value_policy"}:
+        return MaskableActionValuePolicy
+    return policy
 
 
 def make_env_factory(env_cfg: dict, rank: int, base_seed: int) -> Callable[[], MahjongSingleAgentEnv]:
@@ -112,6 +156,8 @@ def build_env(cfg: dict):
     env_cfg = {**cfg.get("env", {}), "reward": cfg.get("reward", {})}
     if "observation" in cfg:
         env_cfg["observation"] = cfg["observation"]
+    if "action_features" in cfg:
+        env_cfg["action_features"] = cfg["action_features"]
     if "opponent_pool" in cfg:
         env_cfg["opponent_pool"] = cfg["opponent_pool"]
     train_cfg = cfg.get("train", {})
@@ -182,6 +228,7 @@ def main() -> None:
                 min_timesteps=int(early_cfg.get("min_timesteps", 1000000)),
                 opponent=eval_opponent,
                 opponent_pool=cfg.get("opponent_pool") if eval_opponent == "pool" else None,
+                train_config=cfg,
                 seed_offset=int(early_cfg.get("seed_offset", 100000)),
                 verbose=1,
             )
@@ -211,7 +258,7 @@ def main() -> None:
         model.verbose = 1
     else:
         model = MaskablePPO(
-            model_cfg.get("policy", "MlpPolicy"),
+            resolve_policy(model_cfg),
             env,
             device=model_cfg.get("device", "auto"),
             policy_kwargs=build_policy_kwargs(model_cfg),

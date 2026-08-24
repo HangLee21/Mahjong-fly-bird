@@ -28,6 +28,7 @@ class EvalEarlyStopCallback(BaseCallback):
         min_timesteps: int = 0,
         opponent: str = "heuristic",
         opponent_pool: dict | None = None,
+        train_config: dict | None = None,
         seed_offset: int = 100000,
         verbose: int = 1,
     ):
@@ -44,6 +45,7 @@ class EvalEarlyStopCallback(BaseCallback):
         self.min_timesteps = int(min_timesteps)
         self.opponent = opponent
         self.opponent_pool = opponent_pool
+        self.train_config = train_config or {}
         self.seed_offset = int(seed_offset)
         self.best_value: float | None = None
         self.bad_evals = 0
@@ -77,6 +79,7 @@ class EvalEarlyStopCallback(BaseCallback):
             self.num_games,
             opponent=self.opponent,
             opponent_pool=self.opponent_pool,
+            train_config=self.train_config,
             seed_offset=self.seed_offset,
         )
         report["timesteps"] = step

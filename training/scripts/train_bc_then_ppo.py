@@ -24,9 +24,8 @@ from stable_baselines3.common.callbacks import BaseCallback
 from mahjong_ai.train.train_ppo import build_env, build_policy_kwargs, load_config
 
 
-def load_traces(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    static: list[list[float]] = []
-    table: list[list[list[float]]] = []
+def load_traces(path: Path) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    arrays: dict[str, list] = {}
     actions: list[int] = []
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
@@ -34,17 +33,21 @@ def load_traces(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
             if not line:
                 continue
             trace = json.loads(line)
-            static.append(trace["observation"])
-            table.append(trace["table"])
             actions.append(int(trace["action"]))
-    return (
-        np.asarray(static, dtype=np.float32),
-        np.asarray(table, dtype=np.float32),
-        np.asarray(actions, dtype=np.int64),
-    )
+            for key in ("observation", "table", "hand", "hand_mask", "history", "history_mask"):
+                if key in trace:
+                    arrays.setdefault(key, []).append(trace[key])
+    obs_arrays = {k: np.asarray(v, dtype=np.float32) for k, v in arrays.items()}
+    if "observation" in obs_arrays:
+        obs_arrays["static"] = obs_arrays.pop("observation")
+    return obs_arrays, np.asarray(actions, dtype=np.int64)
 
 
-def run_bc(model, static: np.ndarray, table: np.ndarray, actions: np.ndarray, epochs: int, batch_size: int) -> None:
+def _obs_batch(obs_arrays: dict[str, np.ndarray], idx: np.ndarray, device) -> dict[str, torch.Tensor]:
+    return {key: torch.as_tensor(value[idx], device=device) for key, value in obs_arrays.items()}
+
+
+def run_bc(model, obs_arrays: dict[str, np.ndarray], actions: np.ndarray, epochs: int, batch_size: int) -> None:
     policy = model.policy
     optimizer = policy.optimizer
     device = model.device
@@ -56,10 +59,7 @@ def run_bc(model, static: np.ndarray, table: np.ndarray, actions: np.ndarray, ep
         batches = 0
         for start in range(0, total, batch_size):
             idx = perm[start : start + batch_size]
-            obs = {
-                "static": torch.as_tensor(static[idx], device=device),
-                "table": torch.as_tensor(table[idx], device=device),
-            }
+            obs = _obs_batch(obs_arrays, idx, device)
             act = torch.as_tensor(actions[idx], device=device)
             _, log_prob, _ = policy.evaluate_actions(obs, act)
             loss = -log_prob.mean()
@@ -74,10 +74,9 @@ def run_bc(model, static: np.ndarray, table: np.ndarray, actions: np.ndarray, ep
 class BcAuxCallback(BaseCallback):
     """Keep pulling the policy toward human actions during PPO."""
 
-    def __init__(self, static: np.ndarray, table: np.ndarray, actions: np.ndarray, batch_size: int, steps: int):
+    def __init__(self, obs_arrays: dict[str, np.ndarray], actions: np.ndarray, batch_size: int, steps: int):
         super().__init__()
-        self.static = static
-        self.table = table
+        self.obs_arrays = obs_arrays
         self.actions = actions
         self.batch_size = batch_size
         self.steps = steps
@@ -94,10 +93,7 @@ class BcAuxCallback(BaseCallback):
             return
         idx = np.random.default_rng().integers(0, total, size=(self.steps, self.batch_size))
         for batch in idx:
-            obs = {
-                "static": torch.as_tensor(self.static[batch], device=device),
-                "table": torch.as_tensor(self.table[batch], device=device),
-            }
+            obs = _obs_batch(self.obs_arrays, batch, device)
             act = torch.as_tensor(self.actions[batch], device=device)
             _, log_prob, _ = policy.evaluate_actions(obs, act)
             loss = -log_prob.mean()
@@ -165,9 +161,9 @@ def main() -> None:
         )
 
         if not args.no_bc:
-            static, table, actions = load_traces(Path(args.bc_data))
+            obs_arrays, actions = load_traces(Path(args.bc_data))
             print(f"Loaded {len(actions)} human traces; starting BC.")
-            run_bc(model, static, table, actions, args.bc_epochs, args.bc_batch_size)
+            run_bc(model, obs_arrays, actions, args.bc_epochs, args.bc_batch_size)
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -179,8 +175,8 @@ def main() -> None:
     if total_timesteps > 0:
         callback = None
         if args.bc_aux_steps > 0:
-            static, table, actions = load_traces(Path(args.bc_data))
-            callback = BcAuxCallback(static, table, actions, args.bc_aux_batch, args.bc_aux_steps)
+            obs_arrays, actions = load_traces(Path(args.bc_data))
+            callback = BcAuxCallback(obs_arrays, actions, args.bc_aux_batch, args.bc_aux_steps)
             print(f"PPO fine-tune with BC aux ({args.bc_aux_steps} steps/rollout) for {total_timesteps} timesteps.")
         else:
             print(f"Starting PPO fine-tune for {total_timesteps} timesteps.")
