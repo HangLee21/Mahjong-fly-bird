@@ -5,6 +5,7 @@ import hashlib
 import json
 import random
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Literal
 
 from mahjong_ai.env.actions import (
@@ -95,6 +96,49 @@ class GameState:
     kong_after_discard_player: int | None = None
     public_events: list[dict] = field(default_factory=list)
 
+    def __deepcopy__(self, memo):
+        """Fast clone: copy nested containers in one pass instead of generic deepcopy.
+
+        ``clone_state`` is on every env step (plus per-action simulation), so this
+        is the hottest path in the engine. Lists of ints/sets/dicts are rebuilt
+        directly; only objects (PendingClaim / Meld) go through real deepcopy.
+        """
+        cls = type(self)
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for name in self.__dataclass_fields__:
+            value = getattr(self, name)
+            if isinstance(value, list):
+                if not value:
+                    rebuilt: object = []
+                else:
+                    first = value[0]
+                    if isinstance(first, list):
+                        # Meld objects are mutated in place (added-kong path), so
+                        # they must be copied, not shared.
+                        if first and isinstance(first[0], Meld):
+                            rebuilt = [[copy.deepcopy(m, memo) for m in x] for x in value]
+                        else:
+                            rebuilt = [list(x) for x in value]
+                    elif isinstance(first, set):
+                        rebuilt = [set(x) for x in value]
+                    elif isinstance(first, dict):
+                        rebuilt = [dict(x) for x in value]
+                    elif isinstance(first, (int, float, str, bool)) or first is None:
+                        rebuilt = list(value)
+                    else:
+                        rebuilt = copy.deepcopy(value, memo)
+                setattr(result, name, rebuilt)
+            elif isinstance(value, set):
+                setattr(result, name, set(value))
+            elif isinstance(value, dict):
+                setattr(result, name, {k: copy.deepcopy(v, memo) for k, v in value.items()})
+            elif name == "pending" and value is not None:
+                setattr(result, name, copy.deepcopy(value, memo))
+            else:
+                setattr(result, name, value)
+        return result
+
 
 def tile_suit(tile: int) -> Suit:
     if 0 <= tile <= 8:
@@ -158,25 +202,32 @@ def _can_form_melds_without_wildcards(c: list[int]) -> bool:
 
 
 def _can_form_melds(c: list[int], wildcards: int) -> bool:
-    try:
-        first = next(i for i, v in enumerate(c) if v)
-    except StopIteration:
+    return _can_form_melds_cached(tuple(c), wildcards)
+
+
+@lru_cache(maxsize=200000)
+def _can_form_melds_cached(c: tuple[int, ...], wildcards: int) -> bool:
+    first = -1
+    for i, v in enumerate(c):
+        if v:
+            first = i
+            break
+    if first < 0:
         return wildcards % 3 == 0
 
     need = max(0, 3 - c[first])
     if need <= wildcards:
         used = min(3, c[first])
-        c[first] -= used
-        if _can_form_melds(c, wildcards - need):
-            c[first] += used
+        c_list = list(c)
+        c_list[first] -= used
+        if _can_form_melds_cached(tuple(c_list), wildcards - need):
             return True
-        c[first] += used
 
     suit = tile_suit(first)
     rank = tile_rank(first)
     if suit != "z" and rank is not None and rank <= 7:
         seq = [first, first + 1, first + 2]
-        branch = c[:]
+        branch = list(c)
         missing = 0
         for t in seq:
             if branch[t] > 0:
@@ -184,7 +235,7 @@ def _can_form_melds(c: list[int], wildcards: int) -> bool:
             else:
                 missing += 1
         possible = missing <= wildcards and all(tile_suit(t) == suit for t in seq)
-        if possible and _can_form_melds(branch, wildcards - missing):
+        if possible and _can_form_melds_cached(tuple(branch), wildcards - missing):
             return True
     return False
 
@@ -194,6 +245,10 @@ def is_standard_win(tiles: list[int], wildcard_enabled: bool = True) -> bool:
     wildcards = c[WILDCARD] if wildcard_enabled else 0
     if wildcard_enabled:
         c[WILDCARD] = 0
+    # A standard hand is 4 melds + 1 pair; with exposed melds the remaining
+    # hand is 2/5/8/11/14 tiles, all ≡ 2 (mod 3). Reject impossible counts fast.
+    if (sum(c) + wildcards) % 3 != 2:
+        return False
     for pair_tile in range(N_TILE_TYPES):
         natural = c[pair_tile]
         for use_wild in range(0, min(2, wildcards) + 1):
@@ -434,8 +489,8 @@ class FlybirdRuleEngine:
 
     def get_public_info(self, state: GameState) -> dict:
         return {
-            "discards": copy.deepcopy(state.discards),
-            "melds": copy.deepcopy(state.melds),
+            "discards": [list(d) for d in state.discards],
+            "melds": [list(m) for m in state.melds],
             "scores": list(state.scores),
             "dealer": state.dealer,
             "current_player": self.get_current_player(state),
@@ -445,7 +500,7 @@ class FlybirdRuleEngine:
             "last_discard_player": state.last_discard_player,
             "xiaoji_disabled": state.xiaoji_disabled,
             "phase": state.phase,
-            "public_events": copy.deepcopy(state.public_events),
+            "public_events": [dict(e) for e in state.public_events],
         }
 
     def get_private_info(self, state: GameState, player_id: int) -> dict:
@@ -624,6 +679,10 @@ class FlybirdRuleEngine:
             self._remove_tiles(state.hands[player_id], [tile, tile])
             state.melds[player_id].append(Meld("pong", [tile, tile, tile], from_player=discarder))
             self._record_event(state, "pong", player_id, tile=tile, target_player=discarder)
+            if tile == WILDCARD:
+                # Pong-ing the 1 bamboo treats the xiaoji as its natural 1条,
+                # which disables the wildcard for everyone (Xuanwei rule).
+                state.xiaoji_disabled = True
             state.current_player = player_id
             state.phase = "discard"
             state.pending = None

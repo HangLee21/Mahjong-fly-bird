@@ -174,9 +174,27 @@ def main() -> None:
     total_timesteps = int(train_cfg.get("total_timesteps", 0))
     if total_timesteps > 0:
         callback = None
+        # Periodic checkpoints so an interrupted run can be resumed via
+        # --resume instead of losing all PPO progress.
+        checkpoint_freq = int(cfg.get("logging", {}).get("checkpoint_freq", 0))
+        if checkpoint_freq > 0:
+            from stable_baselines3.common.callbacks import CheckpointCallback
+
+            save_freq = max(1, checkpoint_freq // max(1, int(train_cfg.get("num_envs", 1))))
+            periodic_dir = out / "periodic"
+            periodic_dir.mkdir(parents=True, exist_ok=True)
+            callback = CheckpointCallback(
+                save_freq=save_freq,
+                save_path=str(periodic_dir),
+                name_prefix="model",
+                save_replay_buffer=False,
+                save_vecnormalize=False,
+            )
+            print(f"Periodic checkpoints every {save_freq} steps -> {periodic_dir}")
         if args.bc_aux_steps > 0:
             obs_arrays, actions = load_traces(Path(args.bc_data))
-            callback = BcAuxCallback(obs_arrays, actions, args.bc_aux_batch, args.bc_aux_steps)
+            aux_cb = BcAuxCallback(obs_arrays, actions, args.bc_aux_batch, args.bc_aux_steps)
+            callback = aux_cb if callback is None else [callback, aux_cb]
             print(f"PPO fine-tune with BC aux ({args.bc_aux_steps} steps/rollout) for {total_timesteps} timesteps.")
         else:
             print(f"Starting PPO fine-tune for {total_timesteps} timesteps.")

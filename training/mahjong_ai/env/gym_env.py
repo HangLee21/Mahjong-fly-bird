@@ -172,9 +172,15 @@ class MahjongSingleAgentEnv(gym.Env if gym else object):
         ):
             player = self.rule_adapter.get_current_player(self.state)
             legal = self.rule_adapter.get_legal_actions(self.state, player)
-            obs = build_observation(self.rule_adapter, self.state, player, self.config)
+            opponent = self.opponents[player]
+            # Rule-based opponents only read `info`; skip the (expensive)
+            # observation build unless the opponent actually needs it.
+            if getattr(opponent, "uses_observation", False):
+                obs = build_observation(self.rule_adapter, self.state, player, self.config)
+            else:
+                obs = None
             info = {**self._info_for(player), "hand": self.state.hands[player]}
-            action = self.opponents[player].act(obs, legal, info)
+            action = opponent.act(obs, legal, info)
             self.state = self.rule_adapter.step(self.state, player, action)
             guard += 1
             if guard > self.max_steps * 4:

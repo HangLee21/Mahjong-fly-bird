@@ -12,6 +12,8 @@ from mahjong_ai.env.actions import build_action_mask
 class ModelAgent(BaseAgent):
     """Lazy-loaded MaskablePPO opponent used by the self-play pool."""
 
+    uses_observation = True
+
     def __init__(
         self,
         model_path: str,

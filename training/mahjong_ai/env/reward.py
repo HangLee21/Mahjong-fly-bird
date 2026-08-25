@@ -370,6 +370,7 @@ def claim_decision_reward(state: Any, player_id: int, action: int | None, cfg: d
     pass_non_improving_claim_bonus = float(cfg.get("pass_non_improving_claim_bonus", 0.0))
     pass_same_claim_bonus = float(cfg.get("pass_same_claim_bonus", 0.0))
     pass_improving_claim_penalty = float(cfg.get("pass_improving_claim_penalty", 0.0))
+    claim_1tiao_penalty = float(cfg.get("claim_1tiao_penalty", 0.0))
     if (
         claim_improvement_bonus == 0.0
         and claim_same_penalty == 0.0
@@ -377,6 +378,7 @@ def claim_decision_reward(state: Any, player_id: int, action: int | None, cfg: d
         and pass_non_improving_claim_bonus == 0.0
         and pass_same_claim_bonus == 0.0
         and pass_improving_claim_penalty == 0.0
+        and claim_1tiao_penalty == 0.0
     ):
         return 0.0
 
@@ -385,6 +387,19 @@ def claim_decision_reward(state: Any, player_id: int, action: int | None, cfg: d
     wildcard_enabled = not bool(getattr(state, "xiaoji_disabled", False))
     current = best_shanten(hand, open_melds=open_melds, wildcard_enabled=wildcard_enabled)
     claim_actions = [ACTION_PONG, ACTION_KONG_EXPOSED, ACTION_CHOW_LEFT, ACTION_CHOW_MIDDLE, ACTION_CHOW_RIGHT]
+    pending = getattr(state, "pending", None)
+    pending_tile = int(getattr(pending, "tile", -1))
+    # The xiaoji (1 bamboo) is the wildcard. When it is claimed as its natural
+    # 1条 via chow or pong, the wildcard is disabled for everyone (Xuanwei rule)
+    # — humans almost never do this. The wildcard can only ever substitute in
+    # kong, never in chow/pong, so any chow/pong on tile 18 is the natural 1条.
+    claim_actions = (ACTION_CHOW_LEFT, ACTION_CHOW_MIDDLE, ACTION_CHOW_RIGHT, ACTION_PONG)
+    uses_1tiao = (
+        claim_1tiao_penalty > 0.0
+        and wildcard_enabled
+        and pending_tile == WILDCARD
+        and action in claim_actions
+    )
     claim_values = [
         _claim_after_shanten(state, player_id, claim_action, current)
         for claim_action in claim_actions
@@ -407,10 +422,14 @@ def claim_decision_reward(state: Any, player_id: int, action: int | None, cfg: d
     if selected is None:
         return 0.0
     if selected < current:
-        return claim_improvement_bonus * float(current - selected)
-    if selected == current:
-        return -claim_same_penalty
-    return -claim_regression_penalty * float(selected - current)
+        reward = claim_improvement_bonus * float(current - selected)
+    elif selected == current:
+        reward = -claim_same_penalty
+    else:
+        reward = -claim_regression_penalty * float(selected - current)
+    if uses_1tiao:
+        reward -= claim_1tiao_penalty
+    return reward
 
 
 def _claim_after_shanten(state: Any, player_id: int, action: int, fallback: int) -> int | None:
