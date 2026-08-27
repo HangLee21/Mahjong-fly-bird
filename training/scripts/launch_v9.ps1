@@ -6,7 +6,9 @@
 #   python -m mahjong_ai.train.train_ppo --config configs/ppo_mahjong_attention_v9.yaml
 $ErrorActionPreference = "Continue"
 $log = "artifacts\train_v9_fast.log"
-$env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+# NOTE: do NOT set PYTORCH_CUDA_ALLOC_CONF=expandable_segments here - it can
+# conflict with torch.cuda.set_per_process_memory_fraction (memory_fraction in
+# the config), which caused a spurious OOM at the fraction limit.
 & D:\MiniConda\python.exe -m mahjong_ai.train.train_ppo `
     --config configs\ppo_mahjong_attention_v9_fast.yaml *>> $log
 Write-Output "TRAIN_EXIT=$LASTEXITCODE" | Out-File -Append $log
