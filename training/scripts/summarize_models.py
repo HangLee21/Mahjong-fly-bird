@@ -20,15 +20,20 @@ for f in files:
         print(f"{os.path.basename(f)}: MISSING")
         continue
     r = json.load(open(f, encoding="utf-8"))
+    # avg_score is the primary objective (game score: big wins - deal-ins).
+    # win_rate is a secondary diagnostic (can be gamed by cheap fast wins).
+    sq = r.get("score_quality", {})
     print(
-        f"{os.path.basename(f):55s} {r.get('win_rate', 0):.3f} {r.get('avg_score', 0):6.2f} "
-        f"{r.get('deal_in_rate', 0):.3f} {r.get('action_rates', {}).get('kong', 0):.3f} "
-        f"{r.get('avg_steps', 0):5.1f} {r.get('num_games', 0)}"
+        f"{os.path.basename(f):55s} score={r.get('avg_score', 0):6.2f} "
+        f"winpts={sq.get('avg_win_points_when_win', 0):5.2f} deal_in={r.get('deal_in_rate', 0):.3f} "
+        f"win={r.get('win_rate', 0):.3f} steps={r.get('avg_steps', 0):5.1f} games={r.get('num_games', 0)}"
     )
 print("---best_report.json files---")
 for bf in sorted(glob.glob("artifacts/checkpoints/*/best_report.json")):
     r = json.load(open(bf, encoding="utf-8"))
+    sq = r.get("score_quality", {})
     print(
-        f"{bf:78s} win={r.get('win_rate', 0):.3f} score={r.get('avg_score', 0):6.2f} "
-        f"deal_in={r.get('deal_in_rate', 0):.3f}"
+        f"{bf:78s} score={r.get('avg_score', 0):6.2f} "
+        f"winpts={sq.get('avg_win_points_when_win', 0):5.2f} deal_in={r.get('deal_in_rate', 0):.3f} "
+        f"win={r.get('win_rate', 0):.3f}"
     )

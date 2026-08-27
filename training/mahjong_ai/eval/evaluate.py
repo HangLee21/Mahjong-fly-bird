@@ -99,6 +99,10 @@ def evaluate(
                 counters["fallback_count"] += int(fallback_used)
                 _count_decision_quality(env, legal_actions, action, counters)
                 _count_action(action, action_counts)
+                if action in (ACTION_PONG, ACTION_CHOW_LEFT, ACTION_CHOW_MIDDLE, ACTION_CHOW_RIGHT):
+                    pending = getattr(env.state, "pending", None)
+                    if pending is not None and int(pending.tile) == WILDCARD and not bool(getattr(env.state, "xiaoji_disabled", False)):
+                        counters["claim_1tiao"] += 1
                 if is_discard(action):
                     discard_count += 1
                     xiaoji_discards += int(action == WILDCARD)
@@ -137,7 +141,15 @@ def evaluate(
             counters["total_steps"] += game_steps
             if 0 in winners:
                 counters["controlled_win_score_sum"] += final_scores[0]
-                counters["controlled_win_points_sum"] += float(info.get("win_points") or 0.0)
+                win_points = float(info.get("win_points") or 0.0)
+                counters["controlled_win_points_sum"] += win_points
+                # Single-payer hand value: self-draw collects 3x, ron 1x.
+                hand_value = win_points / 3.0 if info.get("win_type") == "self_draw" else win_points
+                counters["controlled_hand_value_sum"] += hand_value
+                if hand_value >= 4.0:
+                    counters["big_hand_wins"] += 1
+                elif hand_value <= 2.0:
+                    counters["cheap_hand_wins"] += 1
             elif not draw:
                 counters["controlled_loss_score_sum"] += final_scores[0]
                 counters["controlled_losses"] += 1
@@ -183,6 +195,9 @@ def evaluate(
             "avg_score": total_score / num_games,
             "avg_score_when_win": counters["controlled_win_score_sum"] / max(1, counters["wins"]),
             "avg_win_points_when_win": counters["controlled_win_points_sum"] / max(1, counters["wins"]),
+            "avg_hand_value_when_win": counters["controlled_hand_value_sum"] / max(1, counters["wins"]),
+            "big_hand_rate": counters["big_hand_wins"] / max(1, counters["wins"]),
+            "cheap_hand_rate": counters["cheap_hand_wins"] / max(1, counters["wins"]),
             "avg_score_when_not_win": counters["controlled_loss_score_sum"] / max(1, counters["controlled_losses"]),
             "avg_points_lost_when_deal_in": counters["controlled_deal_in_score_sum"]
             / max(1, counters["controlled_deal_in"]),
@@ -191,10 +206,13 @@ def evaluate(
             "discard": action_counts["discard"] / max(1, counters["total_steps"]),
             "pong": action_counts["pong"] / max(1, counters["total_steps"]),
             "chow": action_counts["chow"] / max(1, counters["total_steps"]),
-            "kong": action_counts["kong"] / max(1, counters["total_steps"]),
+            "kong_concealed": action_counts["kong_concealed"] / max(1, counters["total_steps"]),
+            "kong_exposed": action_counts["kong_exposed"] / max(1, counters["total_steps"]),
+            "kong_added": action_counts["kong_added"] / max(1, counters["total_steps"]),
             "win": action_counts["win"] / max(1, counters["total_steps"]),
             "pass": action_counts["pass"] / max(1, counters["total_steps"]),
         },
+        "claim_1tiao_rate": counters["claim_1tiao"] / max(1, action_counts["pong"] + action_counts["chow"]),
         "decision_quality": _decision_quality_report(counters),
         "xiaoji_discard_rate": xiaoji_discards / max(1, discard_count),
         "model_latency_ms": {
@@ -212,8 +230,12 @@ def _count_action(action: int, counts: Counter[str]) -> None:
         counts["pong"] += 1
     elif action in (ACTION_CHOW_LEFT, ACTION_CHOW_MIDDLE, ACTION_CHOW_RIGHT):
         counts["chow"] += 1
-    elif action in (ACTION_KONG_CONCEALED, ACTION_KONG_EXPOSED, ACTION_KONG_ADDED):
-        counts["kong"] += 1
+    elif action == ACTION_KONG_CONCEALED:
+        counts["kong_concealed"] += 1
+    elif action == ACTION_KONG_EXPOSED:
+        counts["kong_exposed"] += 1
+    elif action == ACTION_KONG_ADDED:
+        counts["kong_added"] += 1
     elif action == ACTION_WIN:
         counts["win"] += 1
     elif action == ACTION_PASS:

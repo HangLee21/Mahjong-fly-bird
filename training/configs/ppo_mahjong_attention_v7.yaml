@@ -1,0 +1,102 @@
+seed: 2026
+cuda:
+  allow_tf32: true
+  matmul_precision: high
+  cudnn_benchmark: true
+  empty_cache_on_start: true
+  memory_fraction: 0.85
+  num_threads: 4
+observation:
+  include_table: true
+  include_hand: true
+  include_action_features: true
+action_features:
+  effective_tiles: false
+env:
+  controlled_player: 0
+  max_steps_per_game: 300
+  opponent_agent: heuristic
+  allow_chow: true
+reward:
+  score_scale: 6.0
+  step_penalty: 0.003
+  terminal_win_bonus: 0.03
+  self_draw_bonus: 0.014
+  ron_bonus: 0.005
+  fan_bonus: 0.008
+  point_bonus: 0.012
+  win_fan_scale: 0.3
+  claim_improvement_bonus: 0.018
+  claim_same_penalty: 0.02
+  claim_regression_penalty: 0.06
+  pass_non_improving_claim_bonus: 0.006
+  pass_same_claim_bonus: 0.004
+  pass_improving_claim_penalty: 0.018
+  claim_1tiao_penalty: 0.03
+  discard_live_xiaoji_penalty: 0.045
+  discard_dead_xiaoji_penalty: 0.0
+  human_discard_preference_bonus: 0.002
+  isolated_honor_discard_bonus: 0.010
+  discard_connected_suit_over_honor_penalty: 0.012
+  discard_pair_over_honor_penalty: 0.010
+  discard_pair_penalty: 0.004
+  discard_only_pair_penalty: 0.008
+  discard_best_shanten_bonus: 0.002
+  discard_miss_best_shanten_penalty: 0.012
+  discard_break_meld_penalty: 0.014
+  discard_break_taatsu_penalty: 0.008
+  discard_break_good_taatsu_penalty: 0.018
+  discard_near_ready_good_taatsu_penalty: 0.028
+  discard_weak_taatsu_bonus: 0.006
+  discard_ready_regression_penalty: 0.040
+  discard_one_shanten_regression_penalty: 0.024
+  discard_shape_score_bonus: 0.0012
+  discard_over_kong_penalty: 0.002
+  discard_over_kong_ready_penalty: 0.004
+  concealed_kong_bonus: 0.004
+  exposed_kong_penalty: 0.010
+  added_kong_penalty: 0.006
+  added_kong_as_concealed: true
+  added_kong_as_concealed_bonus: 0.004
+  added_kong_ready_bonus: 0.003
+  shanten_improvement_bonus: 0.010
+  shanten_regression_penalty: 0.018
+  ready_bonus: 0.018
+  hand_goal_mode: committed
+  hand_goal_improvement_bonus: 0.0008
+  hand_goal_regression_penalty: 0.0012
+  hand_goal_switch_penalty: 0.004
+model:
+  policy: MultiInputPolicy
+  device: cuda
+  activation_fn: gelu
+  ortho_init: false
+  feature_extractor:
+    name: mahjong_attention
+    static_hidden_dims: [1024, 1024]
+    d_model: 256
+    nhead: 8
+    num_layers: 4
+    features_dim: 1024
+    dropout: 0.05
+    max_hand_tiles: 14
+  net_arch:
+    pi: [1024, 512, 256]
+    vf: [1024, 512, 256]
+train:
+  total_timesteps: 20000000
+  num_envs: 20
+  vec_env_type: subproc
+  learning_rate: 0.00003
+  n_steps: 512
+  batch_size: 8192
+  n_epochs: 4
+  gamma: 0.99
+  gae_lambda: 0.95
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  clip_range: 0.15
+logging:
+  checkpoint_dir: artifacts/checkpoints/ppo_mahjong_attention_v7
+  checkpoint_freq: 10000000

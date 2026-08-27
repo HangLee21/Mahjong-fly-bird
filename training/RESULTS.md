@@ -98,3 +98,51 @@ opportunity — the "mindless claim" failure from online feedback. v3 raises
 claim_same/regression penalties, adds `claim_use_wildcard_penalty` (never eat the
 live xiaoji wildcard), increases step penalty / win bonus / fan rewards for
 faster, bigger wins.
+
+## MahjongAttention v4 — 2026-08-25
+
+Setup: big model (d_model 256 / 8 heads / 4 layers / 1024 features), 12 subproc
+envs, 5M steps, corrected wildcard rules (`claim_1tiao_penalty`), full online-fix
+reward set. Eval: 500 games vs heuristic.
+
+| metric | v2 | **v4** |
+| --- | --- | --- |
+| win_rate | 0.108 | **0.114** |
+| avg_score | -0.69 | **-0.552** |
+| deal_in | 0.126 | **0.112** |
+| avg_steps | 13.11 | **12.86** |
+| discard_best_shanten | 79.6% | **79.9%** |
+| claim_accept_rate | 100% | **93.7%** |
+| avg_win_points | 3.67 | **5.14** |
+
+Incremental gain over v2 but still far from v3-lite (0.283) and heuristic (0.21).
+Bigger model + 5M steps + corrected rules improved score/deal_in/win slightly and
+win points (big-hand reward working: 3.7 -> 5.1), but the policy still
+over-claims (93.7% accept) and win rate is stuck ~0.11. The attention-only line
+(no action-value features) has not yet shown a breakthrough; v5 maxes out the
+machine (20 envs / n_steps 512 / batch 10240) to get more steps faster, and the
+over-claiming suggests the claim/pass reward balance needs a bigger rework (or a
+claim gate) rather than more steps alone.
+
+## MahjongAttention v5 — 2026-08-25 (max-performance config)
+
+Same model/reward as v4, but 20 envs / n_steps 512 / batch 8192 (batch was 10240
+at 99% VRAM, dialed back for safety). 5M steps at ~821 fps (~1.7h). Eval: 500
+games vs heuristic.
+
+| metric | v4 | **v5** |
+| --- | --- | --- |
+| win_rate | 0.114 | **0.142** |
+| avg_score | -0.552 | **-0.152** |
+| deal_in | 0.112 | 0.124 |
+| avg_steps | 12.86 | 12.92 |
+| discard_best_shanten | 79.9% | **80.1%** |
+| claim_accept_rate | 93.7% | **84.7%** |
+| avg_win_points | 5.14 | **6.38** |
+
+Key finding: the throughput config was also a QUALITY lever. Bigger batch +
+longer rollout (n_steps 512) stabilized PPO gradients, so the same model/reward
+jumped win_rate 0.114 -> 0.142, avg_score -0.552 -> -0.152, and over-claiming
+fell 93.7% -> 84.7%. The attention line is converging (0.08 -> 0.108 -> 0.114 ->
+0.142) and the gap to v3-lite (0.283) is closing. Next: 30M-step overnight run
+(v6, resume v5) at lr 3e-5 to match v3-lite's training scale.
