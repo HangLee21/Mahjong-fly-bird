@@ -27,8 +27,9 @@ def test_v8_config_wiring():
     cfg = load_config(str(ROOT / "configs/ppo_mahjong_attention_v8.yaml"))
     env = _env_for(cfg)
     obs, info = env.reset(seed=1)
-    # Action features enabled -> static dim includes the 128x18 table.
-    assert obs["static"].shape[0] == 394 + 128 * 18
+    # v8 intentionally drops action features so heuristic shards and human
+    # traces (394-dim static) can share one BC dataset.
+    assert obs["static"].shape[0] == 394
     assert "table" in obs and "hand" in obs and "hand_mask" in obs
     assert len(info["legal_actions"]) > 0
 
@@ -97,3 +98,29 @@ def test_v9_extractor_forward_shapes():
     out = extractor(batch)
     assert out.shape == (2, 1024)
     assert torch.isfinite(out).all()
+
+
+def test_v9_fast_config_wiring():
+    """v9-fast (n_epochs 2, batch = n_steps x num_envs) builds and steps."""
+    cfg = load_config(str(ROOT / "configs/ppo_mahjong_attention_v9_fast.yaml"))
+    env = _env_for(cfg)
+    obs, info = env.reset(seed=7)
+    assert obs["static"].shape[0] == 394
+
+    kwargs = build_policy_kwargs(cfg["model"])
+    assert kwargs["features_extractor_class"] is DefenseCrossAttentionExtractor
+
+    from sb3_contrib import MaskablePPO
+
+    model = MaskablePPO(
+        resolve_policy(cfg["model"]),
+        env,
+        device="cpu",
+        policy_kwargs=kwargs,
+        n_steps=int(cfg["train"]["n_steps"]),
+        batch_size=int(cfg["train"]["batch_size"]),
+        n_epochs=int(cfg["train"]["n_epochs"]),
+        verbose=0,
+    )
+    action, _ = model.predict(obs, deterministic=True, action_masks=np.asarray(info["action_mask"]))
+    assert 0 <= int(action) < 128
