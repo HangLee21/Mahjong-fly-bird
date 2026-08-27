@@ -77,7 +77,8 @@ def main() -> int:
             (
                 f"sudo docker exec {CONTAINER} sh -c "
                 "'psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -t -A -c "
-                "\"SELECT count(*), count(DISTINCT \\\"gameId\\\") FROM \\\"GameStep\\\" WHERE \\\"actionSource\\\"='HUMAN'\"'"
+                "\"SELECT count(*), count(DISTINCT \\\"gameId\\\") FROM \\\"GameStep\\\" "
+                "WHERE \\\"actionSource\\\"='\\''HUMAN'\\''\"'"
             ),
         )
         print(out or err)

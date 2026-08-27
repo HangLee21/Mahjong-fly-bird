@@ -50,6 +50,7 @@ def main() -> int:
     parser.add_argument("--remote-path", default="/tmp/uploaded_file", help="Remote destination for --upload.")
     parser.add_argument("--download", default="", help="Remote file to download (SFTP).")
     parser.add_argument("--local-path", default="", help="Local destination for --download.")
+    parser.add_argument("--timeout", type=int, default=60, help="Command timeout in seconds.")
     args = parser.parse_args()
 
     password = args.password or getpass.getpass(f"Password for {args.user}@{HOST}: ")
@@ -66,7 +67,7 @@ def main() -> int:
         sftp.close()
         print(f"downloaded {args.download} -> {local}")
     if args.command:
-        code, out, err = run(client, " ".join(args.command))
+        code, out, err = run(client, " ".join(args.command), timeout=args.timeout)
         if out:
             print(out)
         if err:

@@ -3,6 +3,7 @@ training/artifacts/*
 training/.secrets/
 training/artifacts/pull.log
 training/mahjong_ai.zip
+artifacts/
 __pycache__/
 .pytest_cache/
 *.pyc

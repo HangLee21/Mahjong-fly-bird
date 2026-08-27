@@ -404,3 +404,126 @@ class MahjongAttentionExtractor(BaseFeaturesExtractor):
         table_feat = table_enc.mean(dim=1)
 
         return self.fusion(th.cat([static, hand_feat, table_feat], dim=1))
+
+
+class DefenseCrossAttentionExtractor(BaseFeaturesExtractor):
+    """Attention over hand + table seats, plus hand-to-opponent cross-attention.
+
+    Like :class:`MahjongAttentionExtractor` it runs a Transformer over the
+    per-tile hand tokens and a Transformer over the four seat tokens. On top of
+    that, a cross-attention branch lets every hand tile query the public table
+    tokens (opponents' discards/melds/positions), so the policy can learn
+    *defense*: which of its own tiles are dangerous to discard given what each
+    opponent has already exposed, instead of only reasoning about tile
+    efficiency.
+
+    Expects the same dict observation (``static``, ``hand``, ``hand_mask``,
+    ``table``) as the attention extractor.
+    """
+
+    def __init__(
+        self,
+        observation_space: Any,
+        features_dim: int = 512,
+        static_hidden_dims: list[int] | tuple[int, ...] = (512, 512),
+        d_model: int = 128,
+        nhead: int = 4,
+        num_layers: int = 2,
+        dropout: float = 0.05,
+        max_hand_tiles: int = 14,
+    ):
+        super().__init__(observation_space, features_dim)
+        self.d_model = int(d_model)
+        static_dim = int(observation_space.spaces["static"].shape[0])
+        hand_dim = int(observation_space.spaces["hand"].shape[-1])
+        table_dim = int(observation_space.spaces["table"].shape[-1])
+        self.hand_len = min(int(observation_space.spaces["hand"].shape[0]), int(max_hand_tiles))
+        n_seats = int(observation_space.spaces["table"].shape[0])
+
+        static_layers: list[nn.Module] = []
+        prev = static_dim
+        for hidden in static_hidden_dims:
+            static_layers.append(nn.Linear(prev, int(hidden)))
+            static_layers.append(nn.LayerNorm(int(hidden)))
+            static_layers.append(nn.GELU())
+            if dropout > 0:
+                static_layers.append(nn.Dropout(float(dropout)))
+            prev = int(hidden)
+        static_layers.append(nn.Linear(prev, self.d_model))
+        static_layers.append(nn.LayerNorm(self.d_model))
+        static_layers.append(nn.GELU())
+        self.static_net = nn.Sequential(*static_layers)
+
+        self.hand_proj = nn.Sequential(
+            nn.Linear(hand_dim, self.d_model),
+            nn.LayerNorm(self.d_model),
+            nn.GELU(),
+        )
+        self.hand_pos = nn.Parameter(th.zeros(1, self.hand_len, self.d_model))
+        hand_layer = nn.TransformerEncoderLayer(
+            d_model=self.d_model,
+            nhead=int(nhead),
+            dim_feedforward=self.d_model * 4,
+            dropout=float(dropout),
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.hand_encoder = nn.TransformerEncoder(hand_layer, num_layers=int(num_layers))
+
+        self.table_proj = nn.Sequential(
+            nn.Linear(table_dim, self.d_model),
+            nn.LayerNorm(self.d_model),
+            nn.GELU(),
+        )
+        self.seat_pos = nn.Parameter(th.zeros(1, n_seats, self.d_model))
+        table_layer = nn.TransformerEncoderLayer(
+            d_model=self.d_model,
+            nhead=int(nhead),
+            dim_feedforward=self.d_model * 4,
+            dropout=float(dropout),
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.table_encoder = nn.TransformerEncoder(table_layer, num_layers=int(num_layers))
+
+        # Defense branch: hand tokens (queries) attend over the public table
+        # tokens (keys/values), learning which tiles are safe vs dangerous.
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim=self.d_model,
+            num_heads=int(nhead),
+            dropout=float(dropout),
+            batch_first=True,
+        )
+        self.cross_norm = nn.LayerNorm(self.d_model)
+
+        self.fusion = nn.Sequential(
+            nn.Linear(self.d_model * 4, features_dim),
+            nn.LayerNorm(features_dim),
+            nn.GELU(),
+            nn.Dropout(float(dropout)) if dropout > 0 else nn.Identity(),
+        )
+
+    def forward(self, observations: dict[str, th.Tensor]) -> th.Tensor:
+        static = self.static_net(observations["static"].float())
+
+        hand = observations["hand"].float()
+        hand_mask = observations["hand_mask"].float()
+        hand_tokens = self.hand_proj(hand) + self.hand_pos[:, : hand.shape[1], :]
+        hand_pad = hand_mask <= 0.5
+        hand_enc = self.hand_encoder(hand_tokens, src_key_padding_mask=hand_pad)
+        denom = hand_mask.sum(dim=1).clamp_min(1.0).unsqueeze(-1)
+        hand_feat = (hand_enc * hand_mask.unsqueeze(-1)).sum(dim=1) / denom
+
+        table = observations["table"].float()
+        table_tokens = self.table_proj(table) + self.seat_pos[:, : table.shape[1], :]
+        table_enc = self.table_encoder(table_tokens)
+        table_feat = table_enc.mean(dim=1)
+
+        # Cross-attend each hand tile against every seat's public info.
+        cross, _ = self.cross_attn(hand_enc, table_enc, table_enc)
+        cross = self.cross_norm(cross + hand_enc)
+        cross_feat = (cross * hand_mask.unsqueeze(-1)).sum(dim=1) / denom
+
+        return self.fusion(th.cat([static, hand_feat, cross_feat, table_feat], dim=1))

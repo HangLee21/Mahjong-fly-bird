@@ -9,6 +9,7 @@ import yaml
 
 from mahjong_ai.env.gym_env import MahjongSingleAgentEnv
 from mahjong_ai.models.feature_extractor import (
+    DefenseCrossAttentionExtractor,
     HybridHistoryTransformerExtractor,
     HybridHistoryTransformerV2Extractor,
     LayerNormMLPExtractor,
@@ -103,6 +104,18 @@ def build_policy_kwargs(model_cfg: dict) -> dict:
             return policy_kwargs
         if name == "mahjong_attention":
             policy_kwargs["features_extractor_class"] = MahjongAttentionExtractor
+            policy_kwargs["features_extractor_kwargs"] = {
+                "features_dim": int(extractor_cfg.get("features_dim", 512)),
+                "static_hidden_dims": list(extractor_cfg.get("static_hidden_dims", [512, 512])),
+                "d_model": int(extractor_cfg.get("d_model", 128)),
+                "nhead": int(extractor_cfg.get("nhead", 4)),
+                "num_layers": int(extractor_cfg.get("num_layers", 2)),
+                "dropout": float(extractor_cfg.get("dropout", 0.05)),
+                "max_hand_tiles": int(extractor_cfg.get("max_hand_tiles", 14)),
+            }
+            return policy_kwargs
+        if name == "mahjong_defense_attention":
+            policy_kwargs["features_extractor_class"] = DefenseCrossAttentionExtractor
             policy_kwargs["features_extractor_kwargs"] = {
                 "features_dim": int(extractor_cfg.get("features_dim", 512)),
                 "static_hidden_dims": list(extractor_cfg.get("static_hidden_dims", [512, 512])),
