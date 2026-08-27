@@ -4,6 +4,7 @@ from typing import Any
 
 import torch as th
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 try:
     from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -394,13 +395,15 @@ class MahjongAttentionExtractor(BaseFeaturesExtractor):
         hand_mask = observations["hand_mask"].float()
         hand_tokens = self.hand_proj(hand) + self.hand_pos[:, : hand.shape[1], :]
         hand_pad = hand_mask <= 0.5
-        hand_enc = self.hand_encoder(hand_tokens, src_key_padding_mask=hand_pad)
+        # Gradient checkpointing: 4-layer transformer backward at batch 8192
+        # needs ~10GB alone; recompute forward during backward instead.
+        hand_enc = checkpoint(self.hand_encoder, hand_tokens, src_key_padding_mask=hand_pad, use_reentrant=False)
         denom = hand_mask.sum(dim=1).clamp_min(1.0).unsqueeze(-1)
         hand_feat = (hand_enc * hand_mask.unsqueeze(-1)).sum(dim=1) / denom
 
         table = observations["table"].float()
         table_tokens = self.table_proj(table) + self.seat_pos[:, : table.shape[1], :]
-        table_enc = self.table_encoder(table_tokens)
+        table_enc = checkpoint(self.table_encoder, table_tokens, use_reentrant=False)
         table_feat = table_enc.mean(dim=1)
 
         return self.fusion(th.cat([static, hand_feat, table_feat], dim=1))
@@ -512,13 +515,13 @@ class DefenseCrossAttentionExtractor(BaseFeaturesExtractor):
         hand_mask = observations["hand_mask"].float()
         hand_tokens = self.hand_proj(hand) + self.hand_pos[:, : hand.shape[1], :]
         hand_pad = hand_mask <= 0.5
-        hand_enc = self.hand_encoder(hand_tokens, src_key_padding_mask=hand_pad)
+        hand_enc = checkpoint(self.hand_encoder, hand_tokens, src_key_padding_mask=hand_pad, use_reentrant=False)
         denom = hand_mask.sum(dim=1).clamp_min(1.0).unsqueeze(-1)
         hand_feat = (hand_enc * hand_mask.unsqueeze(-1)).sum(dim=1) / denom
 
         table = observations["table"].float()
         table_tokens = self.table_proj(table) + self.seat_pos[:, : table.shape[1], :]
-        table_enc = self.table_encoder(table_tokens)
+        table_enc = checkpoint(self.table_encoder, table_tokens, use_reentrant=False)
         table_feat = table_enc.mean(dim=1)
 
         # Cross-attend each hand tile against every seat's public info.

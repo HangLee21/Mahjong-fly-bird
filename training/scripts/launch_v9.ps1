@@ -6,6 +6,7 @@
 #   python -m mahjong_ai.train.train_ppo --config configs/ppo_mahjong_attention_v9.yaml
 $ErrorActionPreference = "Continue"
 $log = "artifacts\train_v9_fast.log"
+$env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
 & D:\MiniConda\python.exe -m mahjong_ai.train.train_ppo `
     --config configs\ppo_mahjong_attention_v9_fast.yaml *>> $log
 Write-Output "TRAIN_EXIT=$LASTEXITCODE" | Out-File -Append $log
