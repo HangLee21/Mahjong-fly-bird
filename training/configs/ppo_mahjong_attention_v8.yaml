@@ -1,26 +1,26 @@
-# v8: heuristic BC + action features (option 2).
+# v8: heuristic BC warm-start + human traces (option 2, adjusted).
 #
-# Architecture identical to v7 (attention hand/table + action features) but the
-# run starts from a behavior-cloning warm-start instead of pure RL scratch:
+# NOTE: action features are intentionally NOT used here, for three reasons:
+#   1. 动作特征非刚需（用户确认过），且冠军 v6（无动作特征）在 avg_score 上
+#      胜过带特征的 v3-lite —— 特征不是提升点。
+#   2. 人类对局 traces 是 394 维静态观测（export_human_traces.py 不含动作特
+#      征），与 2698 维动作特征观测无法合入同一个 BC 数据集；去掉特征后人类
+#      数据可以干净地合入（正是选项 2 承诺的"合入人类 traces"）。
+#   3. 收集更快（无需逐动作模拟牌效特征）。
+# 动作特征仍由 v7（scratch）独立验证。
 #
-#   1. Collect heuristic-expert traces (full dict observation incl. action
-#      features):
+# Run plan:
+#   1. Collect heuristic-expert traces (npz shards):
 #        python scripts/collect_heuristic_traces.py \
 #            --config configs/ppo_mahjong_attention_v8.yaml \
 #            --num-samples 300000 \
-#            --output artifacts/datasets/heuristic_v8_traces.jsonl
-#   2. Optionally merge with human traces:
-#        python scripts/merge_traces.py artifacts/datasets/heuristic_v8_traces.jsonl \
-#            artifacts/human_traces.jsonl artifacts/datasets/v8_bc_combined.jsonl
-#   3. BC warm-start + PPO fine-tune:
+#            --output artifacts/datasets/heuristic_v8_traces.npz
+#   2. BC warm-start + PPO fine-tune, mixing heuristic shards + human traces:
 #        python scripts/train_bc_then_ppo.py \
 #            --config configs/ppo_mahjong_attention_v8.yaml \
-#            --bc-data artifacts/datasets/v8_bc_combined.jsonl \
-#            --bc-epochs 8 --bc-batch-size 256 \
+#            --bc-data "artifacts/datasets/heuristic_v8_p*_*.npz,artifacts/human_traces.jsonl" \
+#            --bc-epochs 8 --bc-batch-size 512 \
 #            --output-dir artifacts/checkpoints/ppo_mahjong_attention_v8
-#
-# The action-value features are optional but kept here because they give the
-# policy a direct comparison table over candidate actions (option 2's intent).
 seed: 2026
 cuda:
   allow_tf32: true
@@ -32,9 +32,6 @@ cuda:
 observation:
   include_table: true
   include_hand: true
-  include_action_features: true
-action_features:
-  effective_tiles: false
 env:
   controlled_player: 0
   max_steps_per_game: 300

@@ -10,6 +10,7 @@ learning takes over.
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import sys
 from pathlib import Path
@@ -24,7 +25,18 @@ from stable_baselines3.common.callbacks import BaseCallback
 from mahjong_ai.train.train_ppo import build_env, build_policy_kwargs, load_config
 
 
-def load_traces(path: Path) -> tuple[dict[str, np.ndarray], np.ndarray]:
+def _load_npz(path: Path) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """Load one heuristic-BC npz shard (observations -> static + extra keys)."""
+    data = np.load(path, allow_pickle=False)
+    arrays: dict[str, np.ndarray] = {}
+    for key in ("observations", "table", "hand", "hand_mask", "history", "history_mask"):
+        if key in data.files:
+            arrays["static" if key == "observations" else key] = np.asarray(data[key], dtype=np.float32)
+    actions = np.asarray(data["actions"], dtype=np.int64)
+    return arrays, actions
+
+
+def _load_jsonl(path: Path) -> tuple[dict[str, np.ndarray], np.ndarray]:
     arrays: dict[str, list] = {}
     actions: list[int] = []
     with path.open("r", encoding="utf-8") as handle:
@@ -41,6 +53,37 @@ def load_traces(path: Path) -> tuple[dict[str, np.ndarray], np.ndarray]:
     if "observation" in obs_arrays:
         obs_arrays["static"] = obs_arrays.pop("observation")
     return obs_arrays, np.asarray(actions, dtype=np.int64)
+
+
+def load_traces(path_pattern: str) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """Load one or more BC datasets: comma-separated paths and/or glob patterns.
+
+    Accepts heuristic npz shards (``*.npz``), human/exported jsonl traces, or a
+    mix of both. All datasets must share the same observation keys.
+    """
+    pieces = [piece.strip() for piece in path_pattern.split(",") if piece.strip()]
+    paths: list[Path] = []
+    for piece in pieces:
+        matches = sorted(Path(match) for match in glob.glob(str(Path(piece))))
+        paths.extend(matches if matches else [Path(piece)])
+
+    obs_parts: list[dict[str, np.ndarray]] = []
+    action_parts: list[np.ndarray] = []
+    for path in paths:
+        obs, actions = _load_npz(path) if path.suffix == ".npz" else _load_jsonl(path)
+        if len(actions) == 0:
+            print(f"    (empty dataset: {path})", file=sys.stderr)
+            continue
+        print(f"    loaded {len(actions)} traces from {path}")
+        obs_parts.append(obs)
+        action_parts.append(actions)
+
+    if not obs_parts:
+        raise ValueError(f"no BC traces found for: {path_pattern}")
+    obs_arrays = {key: np.concatenate([part[key] for part in obs_parts]) for key in obs_parts[0]}
+    actions = np.concatenate(action_parts)
+    print(f"    total {len(actions)} BC traces")
+    return obs_arrays, actions
 
 
 def _obs_batch(obs_arrays: dict[str, np.ndarray], idx: np.ndarray, device) -> dict[str, torch.Tensor]:
@@ -161,7 +204,7 @@ def main() -> None:
         )
 
         if not args.no_bc:
-            obs_arrays, actions = load_traces(Path(args.bc_data))
+            obs_arrays, actions = load_traces(args.bc_data)
             print(f"Loaded {len(actions)} human traces; starting BC.")
             run_bc(model, obs_arrays, actions, args.bc_epochs, args.bc_batch_size)
 
@@ -192,7 +235,7 @@ def main() -> None:
             )
             print(f"Periodic checkpoints every {save_freq} steps -> {periodic_dir}")
         if args.bc_aux_steps > 0:
-            obs_arrays, actions = load_traces(Path(args.bc_data))
+            obs_arrays, actions = load_traces(args.bc_data)
             aux_cb = BcAuxCallback(obs_arrays, actions, args.bc_aux_batch, args.bc_aux_steps)
             callback = aux_cb if callback is None else [callback, aux_cb]
             print(f"PPO fine-tune with BC aux ({args.bc_aux_steps} steps/rollout) for {total_timesteps} timesteps.")
