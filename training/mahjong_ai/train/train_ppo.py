@@ -26,6 +26,26 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def _learning_rate(train_cfg: dict) -> float | Callable[[float], float]:
+    """Learning rate from config, optionally as a linear decay schedule.
+
+    ``lr_schedule: linear`` decays ``learning_rate`` linearly to
+    ``final_learning_rate`` (default learning_rate / 10) over the run. A fixed
+    learning rate without decay can drift into late-training collapse, so long
+    runs should prefer the schedule.
+    """
+    lr = float(train_cfg.get("learning_rate", 3e-4))
+    schedule = str(train_cfg.get("lr_schedule", "")).lower()
+    if schedule != "linear":
+        return lr
+    final_lr = float(train_cfg.get("final_learning_rate", lr / 10.0))
+
+    def _schedule(progress_remaining: float) -> float:
+        return final_lr + (lr - final_lr) * float(progress_remaining)
+
+    return _schedule
+
+
 def build_policy_kwargs(model_cfg: dict) -> dict:
     policy_kwargs: dict = {}
     policy_name = str(model_cfg.get("policy", "MlpPolicy")).lower()
@@ -253,7 +273,7 @@ def main() -> None:
             env=env,
             device=model_cfg.get("device", "auto"),
             custom_objects={
-                "learning_rate": float(train_cfg.get("learning_rate", 3e-4)),
+                "learning_rate": _learning_rate(train_cfg),
                 "clip_range": float(train_cfg.get("clip_range", 0.2)),
                 "n_steps": int(train_cfg.get("n_steps", 256)),
                 "batch_size": int(train_cfg.get("batch_size", 64)),
@@ -275,7 +295,7 @@ def main() -> None:
             env,
             device=model_cfg.get("device", "auto"),
             policy_kwargs=build_policy_kwargs(model_cfg),
-            learning_rate=float(train_cfg.get("learning_rate", 3e-4)),
+            learning_rate=_learning_rate(train_cfg),
             n_steps=int(train_cfg.get("n_steps", 256)),
             batch_size=int(train_cfg.get("batch_size", 64)),
             n_epochs=int(train_cfg.get("n_epochs", 4)),

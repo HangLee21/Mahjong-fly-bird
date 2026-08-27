@@ -124,3 +124,18 @@ def test_v9_fast_config_wiring():
     )
     action, _ = model.predict(obs, deterministic=True, action_masks=np.asarray(info["action_mask"]))
     assert 0 <= int(action) < 128
+
+
+def test_v9_fast_lr_schedule():
+    """lr_schedule: linear decays 3e-5 -> 3e-6 over the run."""
+    from mahjong_ai.train.train_ppo import _learning_rate
+
+    cfg = load_config(str(ROOT / "configs/ppo_mahjong_attention_v9_fast.yaml"))
+    lr = _learning_rate(cfg["train"])
+    assert callable(lr)
+    assert abs(lr(1.0) - 3e-5) < 1e-12
+    assert abs(lr(0.5) - 1.65e-5) < 1e-12
+    assert abs(lr(0.0) - 3e-6) < 1e-12
+    # fixed config stays a float
+    v9 = load_config(str(ROOT / "configs/ppo_mahjong_attention_v9.yaml"))
+    assert _learning_rate(v9["train"]) == 3e-5

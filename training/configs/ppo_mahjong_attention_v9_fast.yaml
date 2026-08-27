@@ -3,9 +3,14 @@
 # Same architecture as v9 (mahjong_defense_attention) but tuned for throughput:
 #   - n_epochs 4 -> 2        (learn 时间减半: 每轮 5 次梯度步 -> 2 次)
 #   - batch_size 8192 -> 10240 (= n_steps x num_envs, 每 epoch 恰好 1 次梯度)
+#   - lr_schedule: linear    (3e-5 -> 3e-6 线性衰减)
 # 预计 fps ~820 -> ~1700+（learn 是瓶颈，占每轮 ~85% 时间）。
 # sample efficiency 略降（数据重用减半），但训练数据是自生成的（vs 启发式对手），
 # 净 wall-time 到目标强度通常更快。AMP / torch.compile / 双缓冲留作后续版本。
+#
+# 教训来源：v8（BC 预热 + 固定 lr 3e-5 训 20M）在 10M 达 avg_score 0.225（接近
+# v6-20M 的 0.244），但继续训到 20M 崩到 0.052 —— 固定学习率后期震荡导致
+# catastrophic collapse。v9-fast 因此必须用线性衰减的 lr。
 #
 # 对照实验注意：与 v6/v9 的 n_epochs=4 对比时步数相同但学习量不同；若需严格
 # 对照请使用 ppo_mahjong_attention_v9.yaml。
@@ -96,6 +101,8 @@ train:
   num_envs: 20
   vec_env_type: subproc
   learning_rate: 0.00003
+  lr_schedule: linear
+  final_learning_rate: 0.000003
   n_steps: 512
   batch_size: 10240
   n_epochs: 2
