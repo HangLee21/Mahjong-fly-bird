@@ -45,6 +45,8 @@ ACTION_FEATURE_FULL_DIM = 78
 HAND_MAX_TILES = 14
 HAND_TOKEN_DIM = (N_TILE_TYPES + 1) + 3
 HAND_GOAL_DIM = 4  # standard / seven-pairs / flush / triplet goal scores
+# Value features: per-tile remaining count (34) + shanten + hand shape score.
+VALUE_FEATURE_DIM = N_TILE_TYPES + 2
 
 
 def _count_vec(tiles: list[int], denom: float = 4.0) -> np.ndarray:
@@ -75,6 +77,8 @@ def get_observation_dim(config: dict | None = None) -> int:
     dim = base + (ACTION_SPACE_SIZE if include_mask else 0)
     if include_action_features:
         dim += ACTION_SPACE_SIZE * get_action_feature_dim(cfg)
+    if _include_value_features(cfg):
+        dim += VALUE_FEATURE_DIM
     return dim
 
 
@@ -95,6 +99,12 @@ def include_hand_observation(config: dict | None = None) -> bool:
     cfg = config or {}
     obs_cfg = cfg.get("observation", {})
     return bool(obs_cfg.get("include_hand", cfg.get("obs_include_hand", False)))
+
+
+def _include_value_features(config: dict | None = None) -> bool:
+    cfg = config or {}
+    obs_cfg = cfg.get("observation", {})
+    return bool(obs_cfg.get("include_value_features", cfg.get("obs_include_value_features", False)))
 
 
 def build_observation(
@@ -249,6 +259,8 @@ def build_static_observation(
         parts.append(build_action_mask(legal_actions).astype(np.float32))
     if _include_action_features(cfg):
         parts.append(build_action_features(rule_adapter, state, player_id, cfg).reshape(-1))
+    if _include_value_features(cfg):
+        parts.append(build_value_features(rule_adapter, state, player_id))
     obs = np.concatenate(parts).astype(np.float32)
     validate_observation(obs, get_observation_dim(cfg))
     return obs
@@ -258,6 +270,42 @@ def _include_action_features(config: dict | None = None) -> bool:
     cfg = config or {}
     obs_cfg = cfg.get("observation", {})
     return bool(obs_cfg.get("include_action_features", cfg.get("obs_include_action_features", False)))
+
+
+def build_value_features(rule_adapter: RuleAdapter, state: Any, player_id: int) -> np.ndarray:
+    """Remaining-tile counts plus hand-quality scalars.
+
+    remaining[t] = (4 - seen[t]) / 4 where seen counts the player's own hand
+    plus every public discard / open meld. This is the exact information a
+    strong player tracks to judge tenpai odds and safe tiles. Two cheap scalars
+    (shanten + hand shape) give the network a precomputed quality readout; the
+    model can derive effective-tile expectations from the remaining vector
+    itself. Costs O(public tiles) + 2 shanten calls, no per-action lookahead.
+    """
+
+    public = rule_adapter.get_public_info(state)
+    private = rule_adapter.get_private_info(state, player_id)
+    hand = list(private["hand"])
+    seen = np.zeros(N_TILE_TYPES, dtype=np.float32)
+    for tile in hand:
+        if 0 <= int(tile) < N_TILE_TYPES:
+            seen[int(tile)] += 1.0
+    for discards in public["discards"]:
+        for tile in discards:
+            if 0 <= int(tile) < N_TILE_TYPES:
+                seen[int(tile)] += 1.0
+    for melds in public["melds"]:
+        for meld in melds:
+            for tile in getattr(meld, "tiles", []):
+                if 0 <= int(tile) < N_TILE_TYPES:
+                    seen[int(tile)] += 1.0
+    remaining = np.clip(4.0 - seen, 0.0, 4.0) / 4.0
+    open_melds = len(public["melds"][player_id])
+    wildcard_enabled = not bool(public["xiaoji_disabled"])
+    shanten = best_shanten(hand, open_melds=open_melds, wildcard_enabled=wildcard_enabled)
+    _, shape = fast_hand_value(hand, open_melds=open_melds, wildcard_enabled=wildcard_enabled)
+    scalars = np.asarray([_norm_shanten(shanten), min(1.0, float(shape) / 80.0)], dtype=np.float32)
+    return np.concatenate([remaining, scalars]).astype(np.float32)
 
 
 def get_action_feature_dim(config: dict | None = None) -> int:
