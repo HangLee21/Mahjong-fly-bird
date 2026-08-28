@@ -4,9 +4,9 @@ files = [
     "eval_v6_20m_refined.json",
     "eval_v8_10m_1000g.json",
     "eval_v8_20m_refined.json",
-    "eval_v9fast_10m.json",
-    "eval_v9fast_20m.json",
+    "eval_v8b_15m_refined.json",
     "eval_v9fast_30m_refined.json",
+    "eval_v10_20m_refined.json",
 ]
 print(f"{'model':<34}{'games':<6}{'avg_score':<10}{'win':<7}{'deal_in':<8}{'handval':<8}{'big':<6}{'kongC':<7}{'missWin'}")
 for f in files:
