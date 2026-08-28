@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from stable_baselines3.common.callbacks import BaseCallback
 
-from mahjong_ai.train.train_ppo import build_env, build_policy_kwargs, load_config
+from mahjong_ai.train.train_ppo import _learning_rate, build_env, build_policy_kwargs, load_config
 
 
 def _load_npz(path: Path) -> tuple[dict[str, np.ndarray], np.ndarray]:
@@ -171,7 +171,7 @@ def main() -> None:
             env=env,
             device=model_cfg.get("device", "auto"),
             custom_objects={
-                "learning_rate": float(train_cfg.get("learning_rate", 3e-4)),
+                "learning_rate": _learning_rate(train_cfg),
                 "clip_range": float(train_cfg.get("clip_range", 0.2)),
                 "n_steps": int(train_cfg.get("n_steps", 128)),
                 "batch_size": int(train_cfg.get("batch_size", 256)),
@@ -190,7 +190,7 @@ def main() -> None:
             env,
             device=model_cfg.get("device", "auto"),
             policy_kwargs=build_policy_kwargs(model_cfg),
-            learning_rate=float(train_cfg.get("learning_rate", 3e-4)),
+            learning_rate=_learning_rate(train_cfg),
             n_steps=int(train_cfg.get("n_steps", 128)),
             batch_size=int(train_cfg.get("batch_size", 256)),
             n_epochs=int(train_cfg.get("n_epochs", 4)),

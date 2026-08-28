@@ -29,6 +29,41 @@ from mahjong_ai.env.observation import (
 from mahjong_ai.env.reward import compute_reward
 from mahjong_ai.rules.flybird import FlybirdRuleEngine
 
+# 万筒互换映射：t in [0,8] <-> t+9 in [9,17]。条子(18-26)与字牌(27-33)不动，
+# 癞子(18, 一条)语义保持。这是麻将牌效的等价变换（suit 不变性），用于训练时
+# 数据增强（augment_suit）。整个 GameState 翻转后，obs/action/reward 全部自洽。
+_SUIT_FLIP_MAP = list(range(34))
+for _i in range(9):
+    _SUIT_FLIP_MAP[_i] = _i + 9
+    _SUIT_FLIP_MAP[_i + 9] = _i
+
+
+def _flip_tile(tile: int) -> int:
+    tile = int(tile)
+    return _SUIT_FLIP_MAP[tile] if 0 <= tile < 34 else tile
+
+
+def _flip_state(state: Any, flip: bool) -> Any:
+    """In-place suit flip of every tile-carrying field of a GameState."""
+    if not flip:
+        return state
+    state.hands = [[_flip_tile(t) for t in hand] for hand in state.hands]
+    state.discards = [[_flip_tile(t) for t in discards] for discards in state.discards]
+    state.wall = [_flip_tile(t) for t in state.wall]
+    state.kong_pool = [_flip_tile(t) for t in state.kong_pool]
+    for melds in state.melds:
+        for meld in melds:
+            meld.tiles = [_flip_tile(t) for t in meld.tiles]
+            if meld.wildcard_as is not None:
+                meld.wildcard_as = _flip_tile(meld.wildcard_as)
+    if state.last_discard is not None:
+        state.last_discard = _flip_tile(state.last_discard)
+    if state.last_kong_tile is not None:
+        state.last_kong_tile = _flip_tile(state.last_kong_tile)
+    if state.pending is not None:
+        state.pending.tile = _flip_tile(state.pending.tile)
+    return state
+
 
 class MahjongSingleAgentEnv(gym.Env if gym else object):
     metadata = {"render_modes": ["ansi"]}
@@ -38,6 +73,7 @@ class MahjongSingleAgentEnv(gym.Env if gym else object):
             raise ImportError("gymnasium is required for MahjongSingleAgentEnv")
         self.config = config or {}
         self.controlled_player = int(self.config.get("controlled_player", 0))
+        self.augment_suit = bool(self.config.get("augment_suit", False))
         self.max_steps = int(self.config.get("max_steps_per_game", 300))
         self.rule_adapter = self.config.get("rule_adapter") or FlybirdRuleEngine(
             allow_chow=bool(self.config.get("allow_chow", True))
@@ -97,6 +133,9 @@ class MahjongSingleAgentEnv(gym.Env if gym else object):
         if self.opponent_kind == "pool":
             self.opponents = self._make_opponents(self.opponent_kind)
         self.state = self.rule_adapter.reset(seed)
+        if self.augment_suit:
+            flip = (seed if seed is not None else 0) % 2 == 1
+            _flip_state(self.state, flip)
         self._auto_play_until_controlled()
         self._auto_pass_controlled_forced()
         obs = self._obs()
