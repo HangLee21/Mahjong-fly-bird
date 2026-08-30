@@ -25,6 +25,7 @@ from mahjong_ai.env.observation import (
     include_hand_observation,
     include_table_observation,
     is_history_observation,
+    table_token_dim,
 )
 from mahjong_ai.env.reward import compute_reward
 from mahjong_ai.rules.flybird import FlybirdRuleEngine
@@ -99,7 +100,7 @@ class MahjongSingleAgentEnv(gym.Env if gym else object):
                 spaces_dict["table"] = spaces.Box(
                     low=-np.inf,
                     high=np.inf,
-                    shape=(4, SEAT_DIM),
+                    shape=(4, table_token_dim(self.config)),
                     dtype=np.float32,
                 )
             if include_hand:

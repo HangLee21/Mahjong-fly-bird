@@ -47,6 +47,12 @@ HAND_TOKEN_DIM = (N_TILE_TYPES + 1) + 3
 HAND_GOAL_DIM = 4  # standard / seven-pairs / flush / triplet goal scores
 # Value features: per-tile remaining count (34) + shanten + hand shape score.
 VALUE_FEATURE_DIM = N_TILE_TYPES + 2
+# River-sequence features (per seat): most recent RIVER_SEQ_LEN discards as
+# one-hots + total discard count. Adds the ordering signal missing from the
+# 34-dim discard count vector (defense: which tiles are safe given what each
+# opponent discarded and when).
+RIVER_SEQ_LEN = 4
+RIVER_SEQ_DIM = RIVER_SEQ_LEN * N_TILE_TYPES + 1
 
 
 def _count_vec(tiles: list[int], denom: float = 4.0) -> np.ndarray:
@@ -107,6 +113,16 @@ def _include_value_features(config: dict | None = None) -> bool:
     return bool(obs_cfg.get("include_value_features", cfg.get("obs_include_value_features", False)))
 
 
+def _include_river_sequence(config: dict | None = None) -> bool:
+    cfg = config or {}
+    obs_cfg = cfg.get("observation", {})
+    return bool(obs_cfg.get("include_river_sequence", cfg.get("obs_include_river_sequence", False)))
+
+
+def table_token_dim(config: dict | None = None) -> int:
+    return SEAT_DIM + (RIVER_SEQ_DIM if _include_river_sequence(config) else 0)
+
+
 def build_observation(
     rule_adapter: RuleAdapter,
     state: Any,
@@ -120,7 +136,7 @@ def build_observation(
     if include_table_observation(config) or include_hand:
         result: dict[str, np.ndarray] = {"static": static.astype(np.float32)}
         if include_table_observation(config):
-            result["table"] = build_table_tokens(rule_adapter, state, player_id)
+            result["table"] = build_table_tokens(rule_adapter, state, player_id, config)
         if include_hand:
             result["hand"], result["hand_mask"] = build_hand_tokens(rule_adapter, state, player_id)
         return result
@@ -140,14 +156,20 @@ def build_hand_tokens(rule_adapter: RuleAdapter, state: Any, player_id: int) -> 
 
 
 def encode_hand_tokens(hand: list[int]) -> tuple[np.ndarray, np.ndarray]:
-    """Pure per-tile encoding of a hand into (tokens, mask)."""
+    """Pure per-tile encoding of a hand into (tokens, mask).
+
+    The hand is sorted by tile value first: the physical order of tiles in the
+    hand carries no meaning, so sorting removes position noise from the
+    transformer's fixed positional embeddings and gives a cleaner view of
+    meld/taatsu/pair structure.
+    """
     tokens = np.zeros((HAND_MAX_TILES, HAND_TOKEN_DIM), dtype=np.float32)
     mask = np.zeros((HAND_MAX_TILES,), dtype=np.float32)
     counts = {}
     for tile in hand:
         counts[int(tile)] = counts.get(int(tile), 0) + 1
-    for i, tile in enumerate(hand[:HAND_MAX_TILES]):
-        tile = int(tile)
+    ordered = sorted(int(tile) for tile in hand)
+    for i, tile in enumerate(ordered[:HAND_MAX_TILES]):
         tokens[i, tile] = 1.0
         tokens[i, N_TILE_TYPES + 0] = min(1.0, counts.get(tile, 1) / 4.0)
         tokens[i, N_TILE_TYPES + 1] = 1.0 if tile == WILDCARD else 0.0
@@ -156,7 +178,9 @@ def encode_hand_tokens(hand: list[int]) -> tuple[np.ndarray, np.ndarray]:
     return tokens.astype(np.float32), mask.astype(np.float32)
 
 
-def build_table_tokens(rule_adapter: RuleAdapter, state: Any, player_id: int) -> np.ndarray:
+def build_table_tokens(
+    rule_adapter: RuleAdapter, state: Any, player_id: int, config: dict | None = None
+) -> np.ndarray:
     """Encode each seat as a token so an attention head can see the whole table.
 
     A seat token contains only public information: that seat's discards, open
@@ -168,7 +192,8 @@ def build_table_tokens(rule_adapter: RuleAdapter, state: Any, player_id: int) ->
     public = rule_adapter.get_public_info(state)
     dealer = int(public["dealer"])
     current = int(public["current_player"])
-    tokens = np.zeros((4, SEAT_DIM), dtype=np.float32)
+    include_river = _include_river_sequence(config)
+    tokens = np.zeros((4, table_token_dim(config)), dtype=np.float32)
     for seat in range(4):
         discards = _count_vec(list(public["discards"][seat]))
         meld_tiles = _count_vec([t for m in public["melds"][seat] for t in getattr(m, "tiles", [])])
@@ -176,18 +201,36 @@ def build_table_tokens(rule_adapter: RuleAdapter, state: Any, player_id: int) ->
         relative = np.zeros(4, dtype=np.float32)
         relative[(seat - player_id) % 4] = 1.0
         hand_count = min(1.0, len(getattr(state, "hands", [[], [], [], []])[seat]) / 14.0)
-        tokens[seat] = np.concatenate(
-            [
-                discards,
-                meld_tiles,
-                np.asarray([score], dtype=np.float32),
-                np.asarray([1.0 if seat == dealer else 0.0], dtype=np.float32),
-                np.asarray([1.0 if seat == current else 0.0], dtype=np.float32),
-                relative,
-                np.asarray([hand_count], dtype=np.float32),
-            ]
-        )
+        parts = [
+            discards,
+            meld_tiles,
+            np.asarray([score], dtype=np.float32),
+            np.asarray([1.0 if seat == dealer else 0.0], dtype=np.float32),
+            np.asarray([1.0 if seat == current else 0.0], dtype=np.float32),
+            relative,
+            np.asarray([hand_count], dtype=np.float32),
+        ]
+        if include_river:
+            parts.append(build_river_sequence(public["discards"][seat]))
+        tokens[seat] = np.concatenate(parts)
     return tokens.astype(np.float32)
+
+
+def build_river_sequence(discards: list[int]) -> np.ndarray:
+    """Recent-discard ordering for one seat: last RIVER_SEQ_LEN discards one-hot
+    (in order) + normalized total discard count. The position of each one-hot
+    encodes recency, which the plain 34-dim count vector cannot express."""
+
+    seq = np.zeros(RIVER_SEQ_DIM, dtype=np.float32)
+    recent = list(discards)[-RIVER_SEQ_LEN:]
+    offset = 0
+    for tile in recent:
+        tile = int(tile)
+        if 0 <= tile < N_TILE_TYPES:
+            seq[offset + tile] = 1.0
+        offset += N_TILE_TYPES
+    seq[offset] = min(1.0, len(discards) / 40.0)
+    return seq
 
 
 def build_static_observation(
