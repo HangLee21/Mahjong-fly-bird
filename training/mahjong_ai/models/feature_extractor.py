@@ -381,8 +381,33 @@ class MahjongAttentionExtractor(BaseFeaturesExtractor):
         )
         self.table_encoder = nn.TransformerEncoder(table_layer, num_layers=int(num_layers))
 
+        # v16: optional full-game public history branch (CLS-token encoder).
+        self.has_history = "history" in observation_space.spaces
+        fusion_in = self.d_model * 3
+        if self.has_history:
+            event_dim = int(observation_space.spaces["history"].shape[-1])
+            history_len = int(observation_space.spaces["history"].shape[0])
+            self.event_proj = nn.Sequential(
+                nn.Linear(event_dim, self.d_model),
+                nn.LayerNorm(self.d_model),
+                nn.GELU(),
+            )
+            self.cls_token = nn.Parameter(th.zeros(1, 1, self.d_model))
+            self.history_pos = nn.Parameter(th.zeros(1, history_len + 1, self.d_model))
+            history_layer = nn.TransformerEncoderLayer(
+                d_model=self.d_model,
+                nhead=int(nhead),
+                dim_feedforward=self.d_model * 4,
+                dropout=float(dropout),
+                activation="gelu",
+                batch_first=True,
+                norm_first=True,
+            )
+            self.history_encoder = nn.TransformerEncoder(history_layer, num_layers=int(num_layers))
+            fusion_in = self.d_model * 4
+
         self.fusion = nn.Sequential(
-            nn.Linear(self.d_model * 3, features_dim),
+            nn.Linear(fusion_in, features_dim),
             nn.LayerNorm(features_dim),
             nn.GELU(),
             nn.Dropout(float(dropout)) if dropout > 0 else nn.Identity(),
@@ -406,7 +431,21 @@ class MahjongAttentionExtractor(BaseFeaturesExtractor):
         table_enc = checkpoint(self.table_encoder, table_tokens, use_reentrant=False)
         table_feat = table_enc.mean(dim=1)
 
-        return self.fusion(th.cat([static, hand_feat, table_feat], dim=1))
+        parts = [static, hand_feat, table_feat]
+        if self.has_history:
+            history = observations["history"].float()
+            mask = observations["history_mask"].float()
+            batch_size = history.shape[0]
+            event_features = self.event_proj(history)
+            cls = self.cls_token.expand(batch_size, -1, -1)
+            tokens = th.cat([cls, event_features], dim=1)
+            tokens = tokens + self.history_pos[:, : tokens.shape[1], :]
+            cls_padding = th.zeros((batch_size, 1), dtype=th.bool, device=history.device)
+            padding_mask = th.cat([cls_padding, mask <= 0.0], dim=1)
+            encoded = self.history_encoder(tokens, src_key_padding_mask=padding_mask)
+            parts.append(encoded[:, 0, :])
+
+        return self.fusion(th.cat(parts, dim=1))
 
 
 class DefenseCrossAttentionExtractor(BaseFeaturesExtractor):

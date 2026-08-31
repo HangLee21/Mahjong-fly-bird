@@ -635,7 +635,7 @@ def build_history_observation(
         "history_mask": mask.astype(np.float32),
     }
     if include_table_observation(config):
-        result["table"] = build_table_tokens(rule_adapter, state, player_id)
+        result["table"] = build_table_tokens(rule_adapter, state, player_id, config)
     if include_hand_observation(config):
         result["hand"], result["hand_mask"] = build_hand_tokens(rule_adapter, state, player_id)
     return result
