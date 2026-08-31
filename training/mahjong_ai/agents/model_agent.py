@@ -61,7 +61,14 @@ class ModelAgent(BaseAgent):
                 from sb3_contrib import MaskablePPO
             except Exception as exc:  # pragma: no cover
                 raise RuntimeError("sb3-contrib is required for model opponents") from exc
-            self._model = MaskablePPO.load(self.model_path, device=self.device)
+            self._model = MaskablePPO.load(
+                self.model_path,
+                device=self.device,
+                # Checkpoints trained with a linear lr schedule store the decay
+                # closure (module path recorded at training time); override with
+                # a fixed lr for inference to avoid a segfault on load.
+                custom_objects={"learning_rate": 3e-5},
+            )
         return self._model
 
 
