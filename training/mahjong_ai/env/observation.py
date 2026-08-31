@@ -53,6 +53,11 @@ VALUE_FEATURE_DIM = N_TILE_TYPES + 2
 # opponent discarded and when).
 RIVER_SEQ_LEN = 4
 RIVER_SEQ_DIM = RIVER_SEQ_LEN * N_TILE_TYPES + 1
+# Perfect-information approximation (Suphx): opponent hands as 3x34 count
+# vectors. Visible during training (open-book), zero-filled at inference
+# (closed-book), same dims both ways so the model learns optimal play with
+# full information and relies on inference when hands are hidden.
+OPP_HANDS_DIM = 3 * N_TILE_TYPES
 
 
 def _count_vec(tiles: list[int], denom: float = 4.0) -> np.ndarray:
@@ -85,6 +90,8 @@ def get_observation_dim(config: dict | None = None) -> int:
         dim += ACTION_SPACE_SIZE * get_action_feature_dim(cfg)
     if _include_value_features(cfg):
         dim += VALUE_FEATURE_DIM
+    if _include_opponent_hands(cfg):
+        dim += OPP_HANDS_DIM
     return dim
 
 
@@ -117,6 +124,18 @@ def _include_river_sequence(config: dict | None = None) -> bool:
     cfg = config or {}
     obs_cfg = cfg.get("observation", {})
     return bool(obs_cfg.get("include_river_sequence", cfg.get("obs_include_river_sequence", False)))
+
+
+def _include_opponent_hands(config: dict | None = None) -> bool:
+    cfg = config or {}
+    obs_cfg = cfg.get("observation", {})
+    return bool(obs_cfg.get("include_opponent_hands", cfg.get("obs_include_opponent_hands", False)))
+
+
+def _opponent_hands_visible(config: dict | None = None) -> bool:
+    cfg = config or {}
+    obs_cfg = cfg.get("observation", {})
+    return bool(obs_cfg.get("opponent_hands_visible", cfg.get("obs_opponent_hands_visible", False)))
 
 
 def table_token_dim(config: dict | None = None) -> int:
@@ -304,9 +323,33 @@ def build_static_observation(
         parts.append(build_action_features(rule_adapter, state, player_id, cfg).reshape(-1))
     if _include_value_features(cfg):
         parts.append(build_value_features(rule_adapter, state, player_id))
+    if _include_opponent_hands(cfg):
+        parts.append(build_opponent_hands(state, player_id, visible=_opponent_hands_visible(cfg)))
     obs = np.concatenate(parts).astype(np.float32)
     validate_observation(obs, get_observation_dim(cfg))
     return obs
+
+
+def build_opponent_hands(state: Any, player_id: int, *, visible: bool = False) -> np.ndarray:
+    """3x34 opponent-hand count vectors (normalized /4).
+
+    open-book training: real counts. closed-book inference (default): zeros,
+    the model must infer opponent hands from public information.
+    """
+    vec = np.zeros(OPP_HANDS_DIM, dtype=np.float32)
+    if not visible:
+        return vec
+    hands = getattr(state, "hands", [[] for _ in range(4)])
+    slot = 0
+    for seat in range(4):
+        if seat == player_id:
+            continue
+        for tile in hands[seat]:
+            tile = int(tile)
+            if 0 <= tile < N_TILE_TYPES:
+                vec[slot * N_TILE_TYPES + tile] += 1.0
+        slot += 1
+    return vec / 4.0
 
 
 def _include_action_features(config: dict | None = None) -> bool:

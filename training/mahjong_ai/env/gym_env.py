@@ -75,6 +75,9 @@ class MahjongSingleAgentEnv(gym.Env if gym else object):
         self.config = config or {}
         self.controlled_player = int(self.config.get("controlled_player", 0))
         self.augment_suit = bool(self.config.get("augment_suit", False))
+        self.opponent_hands_enabled = bool(
+            self.config.get("observation", {}).get("include_opponent_hands", False)
+        )
         self.max_steps = int(self.config.get("max_steps_per_game", 300))
         self.rule_adapter = self.config.get("rule_adapter") or FlybirdRuleEngine(
             allow_chow=bool(self.config.get("allow_chow", True))
@@ -247,7 +250,16 @@ class MahjongSingleAgentEnv(gym.Env if gym else object):
 
     def _obs(self) -> Any:
         assert self.state is not None
-        self._last_obs = build_observation(self.rule_adapter, self.state, self.controlled_player, self.config)
+        if self.opponent_hands_enabled:
+            # Open-book training with dropout: show real opponent hands most of
+            # the time so the model learns perfect-information play, but
+            # occasionally hide them so it can still act from public info.
+            visible = np.random.random() < 0.7
+            cfg = dict(self.config)
+            cfg["observation"] = {**cfg.get("observation", {}), "opponent_hands_visible": visible}
+        else:
+            cfg = self.config
+        self._last_obs = build_observation(self.rule_adapter, self.state, self.controlled_player, cfg)
         return self._last_obs
 
     def _info(self) -> dict:
